@@ -10,7 +10,7 @@ import java.math.BigDecimal;
  * 不允许把草稿直接写进数据库。
  *
  * @param amount     金额（元）。用 BigDecimal 而非 double，避免浮点误差
- * @param category   分类，必须是约定的九个枚举之一，无法判断时为 null
+ * @param category   分类，必须是约定的分类之一，无法判断时为 null
  * @param merchant   商户名，可能为 null
  * @param occurredAt 消费时间，格式 yyyy-MM-dd HH:mm:ss，可能为 null
  * @param note       原文摘要

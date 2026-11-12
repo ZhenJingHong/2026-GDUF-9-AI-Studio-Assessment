@@ -15,6 +15,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.test.json.JsonCompareMode;
+import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.transaction.annotation.Transactional;
@@ -93,6 +94,68 @@ class StatsApiTests {
     }
 
     @Test
+    void rangeDefaultsToSumAndIncludesBothDatesAcrossYears() throws Exception {
+        insertBill("餐饮", "100.00", "2026-12-30T23:59:59.999999");
+        insertBill("餐饮", "10.10", "2026-12-31T00:00:00");
+        insertBill("交通", "3.20", "2027-01-02T23:59:59.999999");
+        insertBill("购物", "200.00", "2027-01-03T00:00:00");
+
+        mvc.perform(dateRange("2026-12-31", "2027-01-02"))
+                .andExpect(status().isOk())
+                .andExpect(content().json("""
+                        {"code": 0, "message": "ok", "data": {
+                          "start": "2026-12-31", "end": "2027-01-02", "category": null,
+                          "keyword": null, "aggregate": "sum", "value": 13.30
+                        }}
+                        """, JsonCompareMode.STRICT));
+    }
+
+    @Test
+    void rangeSupportsEveryAggregateAndAppliesBothFilters() throws Exception {
+        insertBill("餐饮", "12.00", "2026-11-05T00:00:00", "Cafe_100%!", null);
+        insertBill("餐饮", "22.01", "2026-11-05T23:59:59.999999", null, "at cafe_100%! today");
+        insertBill("餐饮", "90.00", "2026-11-05T12:00:00", "CafeA100XYZ!", null);
+        insertBill("购物", "80.00", "2026-11-05T12:00:00", "Cafe_100%!", null);
+        insertBill("餐饮", "70.00", "2026-11-06T00:00:00", "Cafe_100%!", null);
+
+        expectFilteredAggregate("sum", 34.01);
+        expectFilteredAggregate("count", 2);
+        expectFilteredAggregate("max", 22.01);
+        expectFilteredAggregate("avg", 17.01);
+    }
+
+    @Test
+    void emptyRangeHasZeroSumAndCountAndNullMaxAndAverage() throws Exception {
+        for (String aggregate : new String[] {"sum", "count", "max", "avg"}) {
+            ResultActions result = mvc.perform(dateRange("2026-11-05", "2026-11-18")
+                    .param("aggregate", aggregate)).andExpect(status().isOk());
+            if (aggregate.equals("sum") || aggregate.equals("count")) {
+                result.andExpect(jsonPath("$.data.value").value(0));
+            } else {
+                result.andExpect(jsonPath("$.data.value").value(nullValue()));
+            }
+        }
+    }
+
+    @Test
+    void rangeRejectsMissingInvalidOrReversedDatesAndUnknownOptions() throws Exception {
+        expectBadRequest(mvc.perform(get("/api/stat/range").param("end", "2026-11-18")),
+                "缺少参数 start");
+        expectBadRequest(mvc.perform(get("/api/stat/range").param("start", "2026-11-05")),
+                "缺少参数 end");
+        expectBadRequest(mvc.perform(dateRange("2026-02-29", "2026-11-18")),
+                "start 必须为有效的 yyyy-MM-dd 日期");
+        expectBadRequest(mvc.perform(dateRange("2026-11-05", "2026-11-8")),
+                "end 必须为有效的 yyyy-MM-dd 日期");
+        expectBadRequest(mvc.perform(dateRange("2026-11-18", "2026-11-05")),
+                "start 不能晚于 end");
+        expectBadRequest(mvc.perform(dateRange("2026-11-05", "2026-11-18").param("aggregate", "median")),
+                "aggregate 必须是 sum、count、max 或 avg");
+        expectBadRequest(mvc.perform(dateRange("2026-11-05", "2026-11-18").param("category", "咖啡")),
+                40002, "category 不在分类枚举内");
+    }
+
+    @Test
     void invalidQueriesReturnTheDocumentedErrorEnvelope() throws Exception {
         expectBadRequest(mvc.perform(get("/api/stat/category")), "缺少参数 month");
         expectBadRequest(mvc.perform(get("/api/stat/category").param("month", "2026-13")),
@@ -107,16 +170,40 @@ class StatsApiTests {
     }
 
     private void insertBill(String category, String amount, String occurredAt) {
-        jdbc.sql("INSERT INTO bill (category, amount, occurred_at) VALUES (?, ?, ?)")
+        insertBill(category, amount, occurredAt, null, null);
+    }
+
+    private void insertBill(String category, String amount, String occurredAt, String merchant, String note) {
+        jdbc.sql("INSERT INTO bill (category, amount, occurred_at, merchant, note) VALUES (?, ?, ?, ?, ?)")
                 .param(category)
                 .param(new BigDecimal(amount))
                 .param(LocalDateTime.parse(occurredAt))
+                .param(merchant)
+                .param(note)
                 .update();
     }
 
+    private MockHttpServletRequestBuilder dateRange(String start, String end) {
+        return get("/api/stat/range").param("start", start).param("end", end);
+    }
+
+    private void expectFilteredAggregate(String aggregate, Number value) throws Exception {
+        mvc.perform(dateRange("2026-11-05", "2026-11-05").param("aggregate", aggregate)
+                        .param("category", "餐饮").param("keyword", " CAFE_100%! "))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.category").value("餐饮"))
+                .andExpect(jsonPath("$.data.keyword").value("CAFE_100%!"))
+                .andExpect(jsonPath("$.data.aggregate").value(aggregate))
+                .andExpect(jsonPath("$.data.value").value(value));
+    }
+
     private void expectBadRequest(ResultActions result, String message) throws Exception {
+        expectBadRequest(result, 40001, message);
+    }
+
+    private void expectBadRequest(ResultActions result, int code, String message) throws Exception {
         result.andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value(40001))
+                .andExpect(jsonPath("$.code").value(code))
                 .andExpect(jsonPath("$.message").value(message))
                 .andExpect(jsonPath("$.data").value(nullValue()));
     }

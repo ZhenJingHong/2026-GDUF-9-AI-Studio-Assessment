@@ -1,10 +1,13 @@
 package com.example.backend.stat;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.time.LocalDate;
 import java.time.YearMonth;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 import org.springframework.stereotype.Service;
@@ -39,6 +42,28 @@ public class StatsService {
             totals.add(totalsByMonth.getOrDefault(month, BigDecimal.ZERO));
         }
         return new MonthlyTrend(months, totals);
+    }
+
+    public RangeStat range(LocalDate start, LocalDate end, String category, String keyword,
+            RangeAggregate aggregate) {
+        StatsRepository.RangeTotals totals = repository.summarizeRange(start, end, category, keyword);
+        Number value = switch (aggregate) {
+            case SUM -> totals.count() == 0 ? BigDecimal.ZERO : totals.total();
+            case COUNT -> totals.count();
+            case MAX -> totals.max();
+            case AVG -> totals.count() == 0 ? null : totals.total()
+                    .divide(BigDecimal.valueOf(totals.count()), 2, RoundingMode.HALF_UP);
+        };
+        return new RangeStat(start.toString(), end.toString(), category, keyword,
+                aggregate.name().toLowerCase(Locale.ROOT), value);
+    }
+
+    public enum RangeAggregate {
+        SUM, COUNT, MAX, AVG
+    }
+
+    public record RangeStat(String start, String end, String category, String keyword, String aggregate,
+            Number value) {
     }
 
     public record CategoryItem(String category, BigDecimal total, long count) {
