@@ -87,7 +87,7 @@ ai.model=deepseek-chat
 
 ## 接口一览
 
-当前仅骨架，接口随开发进度更新，字段定义见 [`docs/接口文档.md`](docs/接口文档.md)。
+字段和联调约定见[接口文档](docs/接口文档.md)。
 
 | 方法 | 路径 | 说明 | 状态 |
 | --- | --- | --- | --- |
@@ -95,7 +95,9 @@ ai.model=deepseek-chat
 | POST | `/api/ai/parse-bill` | 一句话 → 账单 JSON | 🚧 |
 | POST | `/api/bills` | 新增账单 | 🚧 |
 | GET | `/api/bills` | 查询账单 | 🚧 |
-| GET | `/api/stats/category` | 按类别统计 | 🚧 |
+| GET | `/api/stat/category` | 按月统计各类别 | H2 可联调 |
+| GET | `/api/stat/trend` | 月度趋势 | H2 可联调 |
+| GET | `/api/stat/range` | 按起止日期统计金额或笔数 | H2 可联调 |
 
 ## 团队分工
 
