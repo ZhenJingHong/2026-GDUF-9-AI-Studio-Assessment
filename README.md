@@ -75,11 +75,11 @@ ai.model=deepseek-chat
 | 功能 | 状态 | 负责人 |
 | --- | --- | --- |
 | Spring Boot 骨架 | ✅ 已完成 | — |
-| 账单实体与 CRUD | 🚧 开发中 | 邱卓成 |
-| AI 自然语言记账 | 🚧 开发中 | 钟嘉和 |
-| 小票 OCR 识别 | ⬜ 未开始 | 钟嘉和 |
+| 账单实体与 CRUD | ✅ 已完成 | 邱卓成 |
+| AI 自然语言记账 | ✅ 已完成 | 钟嘉和 |
+| 小票 OCR 识别 | ✅ 已完成 | 钟嘉和 |
 | 自动分类与统计 | 🚧 开发中 | 陈宇亮 |
-| 自然语言查账 | ⬜ 未开始 | 钟嘉和 |
+| 自然语言查账 | ✅ 已完成 | 钟嘉和 |
 | 预算与超支提醒 | ⬜ 未开始 | 待认领 |
 | 前端页面 | 🚧 开发中 | 麦苗 |
 | Docker 部署 | ⬜ 未开始 | 待认领 |
@@ -91,11 +91,15 @@ ai.model=deepseek-chat
 
 | 方法 | 路径 | 说明 | 状态 |
 | --- | --- | --- | --- |
-| GET | `/api/ai/ping` | 健康检查 | 🚧 |
-| POST | `/api/ai/parse-bill` | 一句话 → 账单 JSON | 🚧 |
-| POST | `/api/bills` | 新增账单 | 🚧 |
-| GET | `/api/bills` | 查询账单 | 🚧 |
-| GET | `/api/stats/category` | 按类别统计 | 🚧 |
+| GET | `/api/ai/ping` | 健康检查 | ✅ |
+| POST | `/api/ai/parse-bill` | 一句话 → 账单 JSON | ✅ |
+| POST | `/api/ai/ocr-receipt` | 小票/截图 → 账单 JSON | ✅ |
+| POST | `/api/ai/query` | 自然语言查账意图 | ✅ |
+| POST | `/api/bill` | 新增账单 | ✅ |
+| GET | `/api/bill` | 查询账单 | ✅ |
+| DELETE | `/api/bill/{id}` | 删除账单 | ✅ |
+| GET | `/api/stat/category` | 按类别统计 | 🚧 |
+| GET | `/api/stat/trend` | 月度趋势 | 🚧 |
 
 ## 团队分工
 
