@@ -1,4 +1,4 @@
-package com.example.backend.stats;
+package com.example.backend.stat;
 
 import static org.hamcrest.Matchers.nullValue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;

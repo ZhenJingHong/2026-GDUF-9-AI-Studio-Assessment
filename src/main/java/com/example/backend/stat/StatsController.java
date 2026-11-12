@@ -1,4 +1,4 @@
-package com.example.backend.stats;
+package com.example.backend.stat;
 
 import java.time.YearMonth;
 import java.util.regex.Pattern;

@@ -1,4 +1,4 @@
-package com.example.backend.stats;
+package com.example.backend.stat;
 
 import java.math.BigDecimal;
 import java.time.YearMonth;
