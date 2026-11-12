@@ -7,7 +7,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.math.BigDecimal;
-import java.time.LocalDateTime;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -32,12 +31,12 @@ class StatsApiTests {
 
     @Test
     void categorySumsAndCountsBillsInTheSelectedMonth() throws Exception {
-        insertBill("餐饮", "25.50", "2026-11-01T00:00:00");
-        insertBill("餐饮", "14.50", "2026-11-30T23:59:59.999999");
-        insertBill("交通", "12.50", "2026-11-08T12:00:00");
-        insertBill("购物", "30.00", "2026-11-12T12:00:00");
-        insertBill("餐饮", "100.00", "2026-10-31T23:59:59");
-        insertBill("餐饮", "200.00", "2026-12-01T00:00:00");
+        insertBill("餐饮", "25.50", "2026-11-01 00:00:00");
+        insertBill("餐饮", "14.50", "2026-11-30 23:59:59");
+        insertBill("交通", "12.50", "2026-11-08 12:00:00");
+        insertBill("购物", "30.00", "2026-11-12 12:00:00");
+        insertBill("餐饮", "100.00", "2026-10-31 23:59:59");
+        insertBill("餐饮", "200.00", "2026-12-01 00:00:00");
 
         mvc.perform(get("/api/stat/category").param("month", "2026-11"))
                 .andExpect(status().isOk())
@@ -51,7 +50,7 @@ class StatsApiTests {
                         }}
                         """, JsonCompareMode.STRICT));
 
-        insertBill("餐饮", "0.25", "2026-11-13T12:00:00");
+        insertBill("餐饮", "0.25", "2026-11-13 12:00:00");
         mvc.perform(get("/api/stat/category").param("month", "2026-11"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.total").value(82.75))
@@ -69,10 +68,10 @@ class StatsApiTests {
 
     @Test
     void trendIncludesBothEndpointsAndFillsMissingMonthsAcrossYears() throws Exception {
-        insertBill("餐饮", "0.10", "2026-11-01T00:00:00");
-        insertBill("交通", "0.20", "2026-11-15T12:00:00");
-        insertBill("购物", "37.25", "2027-01-31T23:59:59");
-        insertBill("购物", "100.00", "2027-02-01T00:00:00");
+        insertBill("餐饮", "0.10", "2026-11-01 00:00:00");
+        insertBill("交通", "0.20", "2026-11-15 12:00:00");
+        insertBill("购物", "37.25", "2027-01-31 23:59:59");
+        insertBill("购物", "100.00", "2027-02-01 00:00:00");
 
         mvc.perform(get("/api/stat/trend").param("from", "2026-11").param("to", "2027-01"))
                 .andExpect(status().isOk())
@@ -95,10 +94,10 @@ class StatsApiTests {
 
     @Test
     void rangeDefaultsToSumAndIncludesBothDatesAcrossYears() throws Exception {
-        insertBill("餐饮", "100.00", "2026-12-30T23:59:59.999999");
-        insertBill("餐饮", "10.10", "2026-12-31T00:00:00");
-        insertBill("交通", "3.20", "2027-01-02T23:59:59.999999");
-        insertBill("购物", "200.00", "2027-01-03T00:00:00");
+        insertBill("餐饮", "100.00", "2026-12-30 23:59:59");
+        insertBill("餐饮", "10.10", "2026-12-31 00:00:00");
+        insertBill("交通", "3.20", "2027-01-02 23:59:59");
+        insertBill("购物", "200.00", "2027-01-03 00:00:00");
 
         mvc.perform(dateRange("2026-12-31", "2027-01-02"))
                 .andExpect(status().isOk())
@@ -112,11 +111,11 @@ class StatsApiTests {
 
     @Test
     void rangeSupportsEveryAggregateAndAppliesBothFilters() throws Exception {
-        insertBill("餐饮", "12.00", "2026-11-05T00:00:00", "Cafe_100%!", null);
-        insertBill("餐饮", "22.01", "2026-11-05T23:59:59.999999", null, "at cafe_100%! today");
-        insertBill("餐饮", "90.00", "2026-11-05T12:00:00", "CafeA100XYZ!", null);
-        insertBill("购物", "80.00", "2026-11-05T12:00:00", "Cafe_100%!", null);
-        insertBill("餐饮", "70.00", "2026-11-06T00:00:00", "Cafe_100%!", null);
+        insertBill("餐饮", "12.00", "2026-11-05 00:00:00", "Cafe_100%!", null);
+        insertBill("餐饮", "22.01", "2026-11-05 23:59:59", null, "at cafe_100%! today");
+        insertBill("餐饮", "90.00", "2026-11-05 12:00:00", "CafeA100XYZ!", null);
+        insertBill("购物", "80.00", "2026-11-05 12:00:00", "Cafe_100%!", null);
+        insertBill("餐饮", "70.00", "2026-11-06 00:00:00", "Cafe_100%!", null);
 
         expectFilteredAggregate("sum", 34.01);
         expectFilteredAggregate("count", 2);
@@ -174,12 +173,16 @@ class StatsApiTests {
     }
 
     private void insertBill(String category, String amount, String occurredAt, String merchant, String note) {
-        jdbc.sql("INSERT INTO bill (category, amount, occurred_at, merchant, note) VALUES (?, ?, ?, ?, ?)")
+        jdbc.sql("""
+                INSERT INTO bill (category, amount, occurred_at, merchant, note, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """)
                 .param(category)
                 .param(new BigDecimal(amount))
-                .param(LocalDateTime.parse(occurredAt))
+                .param(occurredAt)
                 .param(merchant)
                 .param(note)
+                .param(occurredAt)
                 .update();
     }
 
