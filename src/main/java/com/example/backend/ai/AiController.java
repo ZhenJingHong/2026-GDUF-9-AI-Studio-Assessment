@@ -1,7 +1,9 @@
 package com.example.backend.ai;
 
 import com.example.backend.common.ApiResponse;
+import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.Map;
 
@@ -41,7 +43,23 @@ public class AiController {
             return ApiResponse.fail(50002, "解析失败：" + e.getMessage());
         }
     }
-    /** 自然语言查账：返回结构化查询条件，不是答案 */
+
+    /**
+     * 小票 / 截图识别。
+     * 请求为 multipart/form-data，字段名 file，支持 jpg/png/webp。
+     */
+    @PostMapping(value = "/ocr-receipt", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ApiResponse<BillDraft> ocrReceipt(@RequestParam("file") MultipartFile file) {
+        if (file.isEmpty()) {
+            return ApiResponse.fail(40001, "文件为空");
+        }
+        try {
+            return ApiResponse.ok(aiClient.parseReceipt(file));
+        } catch (Exception e) {
+            return ApiResponse.fail(50002, "识别失败：" + e.getMessage());
+        }
+    }
+
     @PostMapping("/query")
     public ApiResponse<QuerySpec> query(@RequestBody Map<String, String> body) {
         String text = body.getOrDefault("text", "").trim();

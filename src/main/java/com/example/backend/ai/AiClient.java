@@ -5,25 +5,22 @@ import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.multipart.MultipartFile;
 import tools.jackson.databind.json.JsonMapper;
 
+import java.io.IOException;
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
+import java.util.Base64;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.time.LocalDate;
-import java.time.format.DateTimeFormatter;
 
 /**
  * 大模型 API 客户端，项目里所有与模型通信的代码都集中在这里。
  * <p>
- * 职责边界：
- * <ul>
- *   <li>只负责「发请求、拿响应、转对象」，不处理业务校验（校验在上层）</li>
- *   <li>接口地址、密钥、模型名全部来自 application.properties，不硬编码</li>
- * </ul>
- * <p>
- * 注意：Spring Boot 4 使用 Jackson 3，包名是 tools.jackson.*（Spring Boot 3 是 com.fasterxml.jackson.*）。
+ * 注意：Spring Boot 4 使用 Jackson 3，包名是 tools.jackson.*。
  */
 @Component
 public class AiClient {
@@ -31,20 +28,15 @@ public class AiClient {
     /** Jackson 3 的 JSON 解析器，线程安全，作为常量全局复用 */
     private static final JsonMapper JSON_MAPPER = JsonMapper.builder().build();
 
-    /** 允许的分类枚举，与 docs/接口文档.md 一致；模型输出超出时兜底成「其他」 */
+    /** 统一的日期格式 */
+    private static final DateTimeFormatter DATE = DateTimeFormatter.ISO_LOCAL_DATE;
+
+    /** 允许的分类枚举，与 docs/接口文档.md 一致 */
     private static final Set<String> CATEGORIES = Set.of(
             "餐饮", "交通", "购物", "娱乐", "居住", "医疗", "教育", "其他");
 
     /**
      * 一句话记账的提示词。
-     * <p>
-     * 设计要点：
-     * <ul>
-     *   <li>字段逐个列出，减少模型自由发挥</li>
-     *   <li>明确「不确定填 null」，否则模型倾向编造一个数</li>
-     *   <li>给两个示例（few-shot），实测能显著提高格式稳定性</li>
-     *   <li>必须出现 "JSON" 字样，这是 response_format=json_object 的硬性要求</li>
-     * </ul>
      */
     private static final String PARSE_BILL_PROMPT = """
             你是一个记账助手。用户会用一句中文描述一笔消费，请把它解析成一个 JSON 对象。
@@ -71,18 +63,36 @@ public class AiClient {
             输出：{"amount":38,"category":"餐饮","merchant":"星巴克","occurredAt":null,"note":"咖啡","confidence":0.9}
             """;
 
+    /**
+     * 小票识别的提示词。
+     * <p>
+     * 关键约束：优先取"实付/合计"，不要取单价；识别不清不要猜；
+     * 不是小票的图片返回全 null，避免模型强行编一个金额。
+     */
+    private static final String RECEIPT_PROMPT = """
+            你是一个记账助手。用户会给你一张小票或支付截图，请识别出这笔消费并解析成 JSON 对象。
+            只输出 JSON 对象，不要输出任何解释。
+
+            JSON 字段：
+            - amount：数字，这笔订单的实付总金额（单位：元）。识别不出填 null。
+            - category：字符串，只能是以下九个之一：餐饮、交通、购物、娱乐、居住、医疗、教育、其他。识别不出填 null。
+            - merchant：字符串，商户名称。没有填 null。
+            - occurredAt：字符串，消费时间，格式 yyyy-MM-dd HH:mm:ss。小票上没有时间就填 null。
+            - note：字符串，简要说明买了什么。
+            - confidence：数字，0 到 1，表示识别置信度。
+
+            规则：
+            1. 金额优先取“实付”“合计”“总计”“应付”，不要取单价或找零。
+            2. 图片不是小票或账单时，所有字段填 null，confidence 填 0。
+            3. 数字看不清就填 null，不要猜测。
+            """;
+
     /** HTTP 客户端，线程安全可复用 */
     private final RestClient restClient;
 
-    /** 模型名，如 deepseek-chat */
+    /** 模型名，如 deepseek-flash */
     private final String model;
 
-    /**
-     * 构造器注入：Spring 启动时从 application.properties 读
-     * ai.base-url / ai.api-key / ai.model 并传进来。
-     * <p>
-     * apiKey 来自环境变量 AI_API_KEY，不写进配置文件，避免提交时泄露。
-     */
     public AiClient(@Value("${ai.base-url}") String baseUrl,
                     @Value("${ai.api-key}") String apiKey,
                     @Value("${ai.model}") String model) {
@@ -93,24 +103,55 @@ public class AiClient {
         this.model = model;
     }
 
-    /** 普通对话，返回纯文本，仅用于 /api/ai/test 自测链路是否通 */
+    /** 普通对话，返回纯文本，仅用于自测链路 */
     public String chat(String prompt) {
         return request(null, prompt, false);
     }
 
     /**
      * 把一句话解析成账单草稿。
-     *
-     * @param text 用户原话，如「昨天打车32块，和同事AA」
-     * @return 解析结果，字段可能为 null，由前端让用户确认
-     * @throws IllegalStateException 模型返回的不是合法 JSON 时抛出
      */
     public BillDraft parseBill(String text) {
         String json = request(PARSE_BILL_PROMPT, text, true);
+        return toBillDraft(json);
+    }
+
+    /**
+     * 识别小票 / 截图，解析成账单草稿。
+     * <p>
+     * 实现方式：图片转 base64 后以 data URL 内联，
+     * 和文本一起作为 content 数组发给多模态模型（DeepSeek deepseek-flash 支持）。
+     */
+    public BillDraft parseReceipt(MultipartFile file) {
+        byte[] bytes;
+        try {
+            bytes = file.getBytes();
+        } catch (IOException e) {
+            throw new IllegalStateException("读取上传文件失败", e);
+        }
+        String base64 = Base64.getEncoder().encodeToString(bytes);
+        String mime = file.getContentType() == null ? "image/jpeg" : file.getContentType();
+        String dataUrl = "data:" + mime + ";base64," + base64;
+
+        Map<String, Object> textPart = Map.of("type", "text", "text", RECEIPT_PROMPT);
+        Map<String, Object> imagePart = Map.of(
+                "type", "image_url",
+                "image_url", Map.of("url", dataUrl));
+        List<Map<String, Object>> content = List.of(textPart, imagePart);
+
+        Map<String, Object> userMessage = new HashMap<>();
+        userMessage.put("role", "user");
+        userMessage.put("content", content);
+
+        String json = requestMessages(List.of(userMessage), true);
+        return toBillDraft(json);
+    }
+
+    /** 把模型返回的 JSON 字符串转成 BillDraft，并做分类兜底 */
+    private BillDraft toBillDraft(String json) {
         try {
             BillDraft draft = JSON_MAPPER.readValue(json, BillDraft.class);
-            // 兜底：模型可能输出「出行」「吃饭」这类不在枚举里的值，
-            // 统一归为「其他」，防止脏数据流进数据库
+            // 兜底：模型可能输出不在枚举里的分类，统一归为「其他」
             if (draft.category() != null && !CATEGORIES.contains(draft.category())) {
                 draft = new BillDraft(draft.amount(), "其他", draft.merchant(),
                         draft.occurredAt(), draft.note(), draft.confidence());
@@ -122,59 +163,16 @@ public class AiClient {
     }
 
     /**
-     * 真正发 HTTP 请求的地方。
-     *
-     * @param systemPrompt 系统提示词，null 表示不传
-     * @param userPrompt   用户输入
-     * @param jsonMode     是否要求模型只输出 JSON
-     */
-    @SuppressWarnings("unchecked")
-    private String request(String systemPrompt, String userPrompt, boolean jsonMode) {
-        List<Map<String, Object>> messages = systemPrompt == null
-                ? List.of(Map.of("role", "user", "content", userPrompt))
-                : List.of(
-                Map.of("role", "system", "content", systemPrompt),
-                Map.of("role", "user", "content", userPrompt));
-
-        Map<String, Object> requestBody = new HashMap<>();
-        requestBody.put("model", model);
-        // temperature 越低输出越稳定；解析任务要的是准确，不是创意
-        requestBody.put("temperature", 0.2);
-        requestBody.put("messages", messages);
-        if (jsonMode) {
-            // 强制模型输出合法 JSON，避免「好的，我来帮你分析」这类废话
-            requestBody.put("response_format", Map.of("type", "json_object"));
-        }
-
-        // 注意：base-url 只写域名，路径全放在 uri 里。
-        // 如果 uri 以 / 开头会替换掉 baseUrl 的路径部分，写错会 404
-        Map<String, Object> response = restClient.post()
-                .uri("/v1/chat/completions")
-                .contentType(MediaType.APPLICATION_JSON)
-                .body(requestBody)
-                .retrieve()
-                .body(new ParameterizedTypeReference<Map<String, Object>>() {});
-
-        // OpenAI 兼容格式的响应：choices[0].message.content 才是模型回答
-        List<Map<String, Object>> choices =
-                (List<Map<String, Object>>) response.get("choices");
-        Map<String, Object> message = (Map<String, Object>) choices.get(0).get("message");
-        return (String) message.get("content");
-    }
-    /**
      * 把自然语言查询解析成结构化查询条件。
-     * <p>
-     * 关键设计：模型只负责「翻译成查询参数」，不负责算数字。
-     * 统计结果必须由数据库算出来，否则模型可能编造金额。
      */
     public QuerySpec parseQuery(String text) {
         LocalDate today = LocalDate.now();
-        String todayStr = today.format(DateTimeFormatter.ISO_LOCAL_DATE);
-        String thisMonthStart = today.withDayOfMonth(1).format(DateTimeFormatter.ISO_LOCAL_DATE);
+        String todayStr = today.format(DATE);
+        String thisMonthStart = today.withDayOfMonth(1).format(DATE);
         LocalDate lastMonthEnd = today.withDayOfMonth(1).minusDays(1);
-        String lastMonthStart = lastMonthEnd.withDayOfMonth(1).format(DateTimeFormatter.ISO_LOCAL_DATE);
-        String lastMonthEndStr = lastMonthEnd.format(DateTimeFormatter.ISO_LOCAL_DATE);
-        String weekAgo = today.minusDays(6).format(DateTimeFormatter.ISO_LOCAL_DATE);
+        String lastMonthStart = lastMonthEnd.withDayOfMonth(1).format(DATE);
+        String lastMonthEndStr = lastMonthEnd.format(DATE);
+        String weekAgo = today.minusDays(6).format(DATE);
 
         String prompt = String.format("""
                 你是一个记账应用的查询解析器。今天是 %1$s。
@@ -184,7 +182,7 @@ public class AiClient {
                 JSON 字段：
                 - action：字符串，"stat" 表示要统计数字，"list" 表示要看明细，"unknown" 表示与记账无关或看不懂
                 - start：字符串，起始日期 yyyy-MM-dd。用户没提时间范围时填 null
-                - end：字符串，结束日期 yyyy-MM-dd，含当天。用户没提时间范围时填 null
+                - end：字符串，结束日期 yyyy-MM-dd，含当天。没提时间范围时填 null
                 - category：字符串，只能是以下之一：餐饮、交通、购物、娱乐、居住、医疗、教育、其他。没提分类时填 null
                 - aggregate：字符串，"sum" 求和、"count" 计数、"max" 最大值、"avg" 平均值。action 不是 stat 时填 null
                 - keyword：字符串，商户或备注关键词。没有时填 null
@@ -217,5 +215,41 @@ public class AiClient {
         } catch (Exception e) {
             throw new IllegalStateException("模型返回的不是合法 JSON：" + json, e);
         }
+    }
+
+    /** 纯文本请求的便捷方法 */
+    private String request(String systemPrompt, String userPrompt, boolean jsonMode) {
+        List<Map<String, Object>> messages = systemPrompt == null
+                ? List.of(Map.of("role", "user", "content", userPrompt))
+                : List.of(
+                Map.of("role", "system", "content", systemPrompt),
+                Map.of("role", "user", "content", userPrompt));
+        return requestMessages(messages, jsonMode);
+    }
+
+    /**
+     * 发请求的核心方法，接收完整的 messages 数组（支持多模态 content）。
+     */
+    @SuppressWarnings("unchecked")
+    private String requestMessages(List<Map<String, Object>> messages, boolean jsonMode) {
+        Map<String, Object> requestBody = new HashMap<>();
+        requestBody.put("model", model);
+        requestBody.put("temperature", 0.2);
+        requestBody.put("messages", messages);
+        if (jsonMode) {
+            requestBody.put("response_format", Map.of("type", "json_object"));
+        }
+
+        Map<String, Object> response = restClient.post()
+                .uri("/v1/chat/completions")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(requestBody)
+                .retrieve()
+                .body(new ParameterizedTypeReference<Map<String, Object>>() {});
+
+        List<Map<String, Object>> choices =
+                (List<Map<String, Object>>) response.get("choices");
+        Map<String, Object> message = (Map<String, Object>) choices.get(0).get("message");
+        return (String) message.get("content");
     }
 }
