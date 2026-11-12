@@ -1,5 +1,7 @@
 package com.example.backend.stat;
 
+import com.example.backend.common.ApiResponse;
+
 import java.time.YearMonth;
 import java.util.regex.Pattern;
 
@@ -23,31 +25,31 @@ public class StatsController {
     }
 
     @GetMapping("/category")
-    public StatResponse<StatsService.CategoryStats> byCategory(@RequestParam("month") String month) {
-        return new StatResponse<>(0, "ok", service.byCategory(parseMonth("month", month)));
+    public ApiResponse<StatsService.CategoryStats> byCategory(@RequestParam("month") String month) {
+        return ApiResponse.ok(service.byCategory(parseMonth("month", month)));
     }
 
     @GetMapping("/trend")
-    public StatResponse<StatsService.MonthlyTrend> trend(
+    public ApiResponse<StatsService.MonthlyTrend> trend(
             @RequestParam("from") String from, @RequestParam("to") String to) {
         YearMonth startMonth = parseMonth("from", from);
         YearMonth endMonth = parseMonth("to", to);
         if (startMonth.isAfter(endMonth)) {
             throw new InvalidStatParameterException("from 不能晚于 to");
         }
-        return new StatResponse<>(0, "ok", service.trend(startMonth, endMonth));
+        return ApiResponse.ok(service.trend(startMonth, endMonth));
     }
 
     @ExceptionHandler(MissingServletRequestParameterException.class)
     @ResponseStatus(HttpStatus.BAD_REQUEST)
-    StatResponse<Void> missingParameter(MissingServletRequestParameterException exception) {
-        return new StatResponse<>(40001, "缺少参数 " + exception.getParameterName(), null);
+    ApiResponse<Void> missingParameter(MissingServletRequestParameterException exception) {
+        return ApiResponse.fail(40001, "缺少参数 " + exception.getParameterName());
     }
 
     @ExceptionHandler(InvalidStatParameterException.class)
     @ResponseStatus(HttpStatus.BAD_REQUEST)
-    StatResponse<Void> invalidParameter(InvalidStatParameterException exception) {
-        return new StatResponse<>(40001, exception.getMessage(), null);
+    ApiResponse<Void> invalidParameter(InvalidStatParameterException exception) {
+        return ApiResponse.fail(40001, exception.getMessage());
     }
 
     private static YearMonth parseMonth(String parameter, String value) {
@@ -55,9 +57,6 @@ public class StatsController {
             throw new InvalidStatParameterException(parameter + " 必须为有效的 yyyy-MM 月份");
         }
         return YearMonth.parse(value);
-    }
-
-    public record StatResponse<T>(int code, String message, T data) {
     }
 
     private static class InvalidStatParameterException extends RuntimeException {
