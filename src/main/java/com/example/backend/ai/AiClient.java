@@ -1,7 +1,5 @@
 package com.example.backend.ai;
 
-import com.example.backend.common.BillCategories;
-
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.MediaType;
@@ -12,6 +10,7 @@ import tools.jackson.databind.json.JsonMapper;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 
@@ -32,6 +31,10 @@ public class AiClient {
     /** Jackson 3 的 JSON 解析器，线程安全，作为常量全局复用 */
     private static final JsonMapper JSON_MAPPER = JsonMapper.builder().build();
 
+    /** 允许的分类枚举，与 docs/接口文档.md 一致；模型输出超出时兜底成「其他」 */
+    private static final Set<String> CATEGORIES = Set.of(
+            "餐饮", "交通", "购物", "娱乐", "居住", "医疗", "教育", "其他");
+
     /**
      * 一句话记账的提示词。
      * <p>
@@ -49,7 +52,7 @@ public class AiClient {
 
             JSON 字段：
             - amount：数字，金额（单位：元）。无法确定时填 null。
-            - category：字符串，只能是以下分类之一：餐饮、交通、购物、娱乐、居住、医疗、教育、其他。无法确定时填 null。
+            - category：字符串，只能是以下九个之一：餐饮、交通、购物、娱乐、居住、医疗、教育、其他。无法确定时填 null。
             - merchant：字符串，商户名。没有提到时填 null。
             - occurredAt：字符串，消费时间，格式 yyyy-MM-dd HH:mm:ss。没有提到时填 null。
             - note：字符串，原文的简短摘要。
@@ -108,7 +111,7 @@ public class AiClient {
             BillDraft draft = JSON_MAPPER.readValue(json, BillDraft.class);
             // 兜底：模型可能输出「出行」「吃饭」这类不在枚举里的值，
             // 统一归为「其他」，防止脏数据流进数据库
-            if (draft.category() != null && !BillCategories.contains(draft.category())) {
+            if (draft.category() != null && !CATEGORIES.contains(draft.category())) {
                 draft = new BillDraft(draft.amount(), "其他", draft.merchant(),
                         draft.occurredAt(), draft.note(), draft.confidence());
             }
@@ -206,7 +209,7 @@ public class AiClient {
         String json = request(prompt, text, true);
         try {
             QuerySpec spec = JSON_MAPPER.readValue(json, QuerySpec.class);
-            if (spec.category() != null && !BillCategories.contains(spec.category())) {
+            if (spec.category() != null && !CATEGORIES.contains(spec.category())) {
                 spec = new QuerySpec(spec.action(), spec.start(), spec.end(),
                         null, spec.aggregate(), spec.keyword());
             }

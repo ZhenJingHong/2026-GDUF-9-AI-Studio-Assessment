@@ -1,12 +1,12 @@
 package com.example.backend.stat;
 
 import com.example.backend.common.ApiResponse;
-import com.example.backend.common.BillCategories;
 
 import java.time.LocalDate;
 import java.time.YearMonth;
 import java.time.format.DateTimeParseException;
 import java.util.Locale;
+import java.util.Set;
 import java.util.regex.Pattern;
 
 import org.springframework.http.HttpStatus;
@@ -23,6 +23,8 @@ import org.springframework.web.bind.annotation.RestController;
 public class StatsController {
     private static final Pattern MONTH_FORMAT = Pattern.compile("[0-9]{4}-(0[1-9]|1[0-2])");
     private static final Pattern DATE_FORMAT = Pattern.compile("[0-9]{4}-[0-9]{2}-[0-9]{2}");
+    private static final Set<String> CATEGORIES = Set.of(
+            "餐饮", "交通", "购物", "娱乐", "居住", "医疗", "教育", "其他");
     private final StatsService service;
 
     public StatsController(StatsService service) {
@@ -59,7 +61,7 @@ public class StatsController {
         }
 
         String categoryFilter = optionalFilter(category);
-        if (categoryFilter != null && !BillCategories.contains(categoryFilter)) {
+        if (categoryFilter != null && !CATEGORIES.contains(categoryFilter)) {
             throw new InvalidStatParameterException(40002, "category 不在分类枚举内");
         }
         return ApiResponse.ok(service.range(startDate, endDate, categoryFilter,
