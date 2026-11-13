@@ -14,7 +14,7 @@
 |---|---|
 | 后端 | Java 25、Spring Boot 4.1.2、Spring Data JPA、Maven Wrapper |
 | 数据库 | H2（开发期，内存模式） |
-| 前端 | Vue 3 + Vite + Element Plus + ECharts |
+| 前端 | Vue 3 + Vite + ECharts + Lucide 图标 |
 | AI | OpenAI 兼容格式的大模型 API（默认 DeepSeek），小票识别用多模态模型 |
 | 部署 | Docker / docker-compose |
 
@@ -29,7 +29,7 @@
 │   └── stats/         # 统计接口
 ├── src/main/resources/
 │   └── application.properties
-├── frontend/          # Vue3 前端（规划中）
+├── frontend/          # Vue3 前端初版，含演示模式及接口请求代码
 ├── docs/
 │   ├── 接口文档.md
 │   └── 设计说明.md
@@ -53,6 +53,18 @@
 macOS / Linux 用 `./mvnw spring-boot:run`。
 
 启动后访问 <http://localhost:8080>，看到 Whitelabel Error Page 说明服务已起（目前还没有页面路由）。
+
+### 启动前端
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+打开终端显示的地址（通常为 `http://127.0.0.1:5173`）。默认使用本地演示数据；后端启动后，在「账本设置」切换为「连接 Spring Boot 后端」。开发环境通过 Vite 将 `/api` 代理到 `http://localhost:8080`。生产构建使用 `npm run build`，更多说明见 [frontend/README.md](frontend/README.md)。
+
+前端初版已完成演示模式验收，真实后端、AI 与小票识别仍待端到端联调。
 
 ### 配置 AI API Key
 
@@ -81,7 +93,7 @@ ai.model=deepseek-chat
 | 自动分类与统计 | 🚧 开发中 | 陈宇亮 |
 | 自然语言查账 | ✅ 已完成 | 钟嘉和 |
 | 预算与超支提醒 | ⬜ 未开始 | 待认领 |
-| 前端页面 | 🚧 开发中 | 麦苗 |
+| 前端页面 | 🚧 初版已完成，待真实后端联调 | 麦苗 |
 | Docker 部署 | ⬜ 未开始 | 待认领 |
 | 答辩 PPT 与录屏 | ⬜ 未开始 | 陈跃龙 |
 
@@ -113,7 +125,7 @@ ai.model=deepseek-chat
 
 ## 已知问题与未完成部分
 
-- 前端尚未接入，目前只有后端接口
+- 前端已提供页面与接口请求代码，真实后端及 AI 端到端联调尚未完成；默认演示数据保存在浏览器中
 - OCR 识别精度依赖模型，模糊小票可能失败，需要用户手动修正
 - 预算提醒尚未实现
 - 数据库暂用 H2 内存模式，重启数据丢失，后续切换到文件模式或 MySQL
