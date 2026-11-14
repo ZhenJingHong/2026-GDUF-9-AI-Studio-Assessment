@@ -63,7 +63,7 @@ $env:AI_API_KEY="sk-你的key"
 
 macOS / Linux 用 `./mvnw spring-boot:run`。
 
-启动后访问 <http://localhost:8080/api/ai/ping>，返回 `{"code":0,"message":"ok","data":"pong"}` 说明服务已就绪。首次启动会在 `./data` 下创建 H2 数据库文件。
+启动后访问 <http://127.0.0.1:8080/api/ai/ping>，返回 `{"code":0,"message":"ok","data":"pong"}` 说明服务已就绪。首次启动会在 `./data` 下创建 H2 数据库文件。
 
 ### 2. 启动前端（另开一个终端）
 
@@ -73,7 +73,9 @@ pnpm install
 pnpm dev
 ```
 
-浏览器打开 <http://localhost:5173>。Vite 已配置代理，`/api` 请求自动转发到 `localhost:8080`。生产构建用 `pnpm build`，详细说明见 [frontend/README.md](frontend/README.md)。
+浏览器打开 <http://127.0.0.1:5173>。Vite 已配置代理，`/api` 请求自动转发到 `8080`。生产构建用 `pnpm build`，详细说明见 [frontend/README.md](frontend/README.md)。
+
+> **重要**：前端默认进入「本地演示模式」，账单数据存在浏览器 `localStorage`，不会请求后端。要看真实后端数据，在页面「账本设置」里把数据来源切换为「连接 Spring Boot 后端」。
 
 ### 3. 配置 AI API Key
 
@@ -101,12 +103,14 @@ ai.model=deepseek-flash
 
 会导入 12 条 2026 年 11 月的示例账单，覆盖餐饮、交通、购物、居住、娱乐、医疗六个分类，合计 3167.5 元，方便直接查看统计图表。
 
+> 脚本可重复执行，但每次都会追加 12 条，重复执行会出现重复数据。需要干净数据时先删除 `data/gduf-bill.mv.db` 再重启后端。
+
 ## Docker 部署
 
 一条命令构建并启动（前端已打包进镜像，不需要单独启 Node）：
 
 ```powershell
-docker compose up --build
+docker compose up --build -d
 ```
 
 或手动：
@@ -116,7 +120,7 @@ docker build -t gduf-bill .
 docker run -p 8080:8080 -e AI_API_KEY=sk-你的key -v ${PWD}/data:/app/data gduf-bill
 ```
 
-容器内应用监听 8080，浏览器访问 <http://localhost:8080>。`./data` 目录挂载到容器 `/app/data`，**容器删除后数据仍在宿主机**。
+容器内应用监听 8080，浏览器访问 <http://127.0.0.1:8080>。`./data` 目录挂载到容器 `/app/data`，**容器删除后数据仍在宿主机**。
 
 > 注意：本地 `mvnw spring-boot:run` 和 Docker 容器不要同时运行，否则会争抢 8080 端口和 H2 文件锁。
 
@@ -188,7 +192,8 @@ spring.jpa.hibernate.ddl-auto=update
 
 ## 已知问题与未完成部分
 
-- 前端页面与后端接口已打通，但图表交互、异常提示等细节还可完善
+- Windows 下 `localhost` 可能优先解析到 IPv6，Docker 端口映射仅支持 IPv4，会导致首次访问等待超时。建议访问 `http://127.0.0.1:8080` 而不是 `localhost`
+- 前端默认「本地演示模式」，需手动切换数据源才能看到后端真实数据
 - 小票识别精度依赖模型，模糊图片可能失败，需要用户手动修正
 - 预算与超支提醒（MVP 第 4 项）尚未实现
 - 数据库为 H2 文件模式，适合单机演示；多实例部署需换成 MySQL 或 PostgreSQL
