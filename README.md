@@ -13,7 +13,7 @@
 | 层 | 技术 |
 |---|---|
 | 后端 | Java 25、Spring Boot 4.1.2、Spring Data JPA、Maven Wrapper |
-| 数据库 | H2（开发期，内存模式） |
+| 数据库 | H2（文件模式，数据持久化到 `./data`） |
 | 前端 | Vue 3 + Vite + ECharts + Lucide 图标 |
 | AI | OpenAI 兼容格式的大模型 API（默认 DeepSeek），小票识别用多模态模型 |
 | 部署 | Docker / docker-compose |
@@ -58,8 +58,8 @@ macOS / Linux 用 `./mvnw spring-boot:run`。
 
 ```bash
 cd frontend
-npm install
-npm run dev
+pnpm install
+pnpm dev
 ```
 
 打开终端显示的地址（通常为 `http://127.0.0.1:5173`）。默认使用本地演示数据；后端启动后，在「账本设置」切换为「连接 Spring Boot 后端」。开发环境通过 Vite 将 `/api` 代理到 `http://localhost:8080`。生产构建使用 `npm run build`，更多说明见 [frontend/README.md](frontend/README.md)。
@@ -75,12 +75,36 @@ $env:AI_API_KEY="sk-你的key"
 `application.properties` 中读取：
 
 ```properties
-ai.base-url=https://api.deepseek.com/v1
-ai.api-key=${AI_API_KEY}
-ai.model=deepseek-chat
+ai.base-url=https://api.deepseek.com
+ai.api-key=${AI_API_KEY:}
+ai.model=deepseek-flash
 ```
 
 > ⚠️ 真实 Key 不得提交到仓库，本地配置放 `application-local.properties`（已加入 `.gitignore`）。
+
+### 导入示例数据
+
+后端启动后，在项目根目录执行：
+
+```powershell
+.\docs\import-sample.ps1
+
+会导入 12 条 2026 年 11 月的示例账单，覆盖餐饮、交通、购物等分类，合计 3167.5 元，方便直接查看统计图表。
+
+###Docker 部署
+一条命令构建并启动（前端已打包进镜像，不需要单独启 Node）：
+
+powershell:
+docker compose up --build
+
+或手动：
+powershell:
+docker build -t gduf-bill .
+docker run -p 8080:8080 -e AI_API_KEY=sk-你的key -v ${PWD}/data:/app/data gduf-bill
+
+容器内应用监听 8080，浏览器访问 http://localhost:8080。./data 目录挂载到容器 /app/data，容器删除后数据仍在宿主机。
+
+注意：本地 mvnw spring-boot:run 和 Docker 容器不要同时运行，会争抢 8080 端口和 H2 文件锁。
 
 ## 功能进度
 
@@ -93,8 +117,8 @@ ai.model=deepseek-chat
 | 自动分类与统计 | 🚧 开发中 | 陈宇亮 |
 | 自然语言查账 | ✅ 已完成 | 钟嘉和 |
 | 预算与超支提醒 | ⬜ 未开始 | 待认领 |
-| 前端页面 | 🚧 初版已完成，待真实后端联调 | 麦苗 |
-| Docker 部署 | ⬜ 未开始 | 待认领 |
+| 前端页面 | ✅ 已完成 | 麦苗 |
+| Docker 部署 | ✅ 已完成 | 钟嘉和 |
 | 答辩 PPT 与录屏 | ⬜ 未开始 | 陈跃龙 |
 
 ## 接口一览
@@ -110,8 +134,9 @@ ai.model=deepseek-chat
 | POST | `/api/bill` | 新增账单 | ✅ |
 | GET | `/api/bill` | 查询账单 | ✅ |
 | DELETE | `/api/bill/{id}` | 删除账单 | ✅ |
-| GET | `/api/stat/category` | 按类别统计 | 🚧 |
-| GET | `/api/stat/trend` | 月度趋势 | 🚧 |
+| GET | `/api/stat/category` | 按类别统计 | ✅ |
+| GET | `/api/stat/trend` | 月度趋势 | ✅ |
+| GET | `/api/stat/range` | 按日期范围统计 | ✅ |
 
 ## 团队分工
 
@@ -128,8 +153,7 @@ ai.model=deepseek-chat
 - 前端已提供页面与接口请求代码，真实后端及 AI 端到端联调尚未完成；默认演示数据保存在浏览器中
 - OCR 识别精度依赖模型，模糊小票可能失败，需要用户手动修正
 - 预算提醒尚未实现
-- 数据库暂用 H2 内存模式，重启数据丢失，后续切换到文件模式或 MySQL
-- Docker 镜像尚未提供
+- 数据库为 H2 文件模式，适合单机演示；多实例部署需换成 MySQL 或 PostgreSQL
 
 ## 提交规范
 
