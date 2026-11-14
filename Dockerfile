@@ -1,9 +1,11 @@
 # ---------- 阶段 1：构建前端 ----------
 FROM node:20-alpine AS frontend
 WORKDIR /fe
+ENV COREPACK_NPM_REGISTRY=https://registry.npmmirror.com
 RUN corepack enable
-COPY frontend/package.json frontend/pnpm-lock.yaml ./
-RUN pnpm install --frozen-lockfile
+COPY frontend/package.json frontend/pnpm-lock.yaml frontend/pnpm-workspace.yaml ./
+RUN pnpm config set registry https://registry.npmmirror.com \
+ && pnpm install --frozen-lockfile
 COPY frontend/ ./
 RUN pnpm build
 
