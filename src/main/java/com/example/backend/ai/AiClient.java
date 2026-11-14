@@ -39,14 +39,23 @@ public class AiClient {
      * 一句话记账的提示词。
      */
     private static final String PARSE_BILL_PROMPT = """
-            你是一个记账助手。用户会用一句中文描述一笔消费，请把它解析成一个 JSON 对象。
+            你是一个记账助手。今天是 %1$s。
+
+            用户会用一句中文描述一笔消费，请把它解析成一个 JSON 对象。
             只输出 JSON 对象，不要输出任何解释，不要用 markdown 代码块。
+
+            时间规则（今天是 %1$s）：
+            - "今天" 用 %1$s
+            - "昨天" 用 %2$s
+            - "前天" 用 %3$s
+            - 只说了日期没说时刻，用 00:00:00 补全
+            - 完全没提到时间，occurredAt 填 null
 
             JSON 字段：
             - amount：数字，金额（单位：元）。无法确定时填 null。
             - category：字符串，只能是以下九个之一：餐饮、交通、购物、娱乐、居住、医疗、教育、其他。无法确定时填 null。
             - merchant：字符串，商户名。没有提到时填 null。
-            - occurredAt：字符串，消费时间，格式 yyyy-MM-dd HH:mm:ss。没有提到时填 null。
+            - occurredAt：字符串，消费时间，格式 yyyy-MM-dd HH:mm:ss。按上面的时间规则换算。
             - note：字符串，原文的简短摘要。
             - confidence：数字，0 到 1，表示你对这次解析的置信度。
 
@@ -57,7 +66,7 @@ public class AiClient {
 
             示例：
             输入：昨天打车32块
-            输出：{"amount":32,"category":"交通","merchant":null,"occurredAt":null,"note":"打车","confidence":0.95}
+            输出：{"amount":32,"category":"交通","merchant":null,"occurredAt":"%2$s 00:00:00","note":"打车","confidence":0.95}
 
             输入：星巴克咖啡38
             输出：{"amount":38,"category":"餐饮","merchant":"星巴克","occurredAt":null,"note":"咖啡","confidence":0.9}
@@ -112,7 +121,12 @@ public class AiClient {
      * 把一句话解析成账单草稿。
      */
     public BillDraft parseBill(String text) {
-        String json = request(PARSE_BILL_PROMPT, text, true);
+        LocalDate today = LocalDate.now();
+        String prompt = String.format(PARSE_BILL_PROMPT,
+                today.format(DATE),
+                today.minusDays(1).format(DATE),
+                today.minusDays(2).format(DATE));
+        String json = request(prompt, text, true);
         return toBillDraft(json);
     }
 
