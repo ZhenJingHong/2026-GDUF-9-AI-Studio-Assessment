@@ -8,7 +8,8 @@ const colors = ['#34765b','#b6ce8b','#e8bb7b','#899cce','#d69385','#86bbbc','#c4
 const icons = ['🍜','🚕','🛍️','🎮','🏠','💊','📚','🧩']
 function localDate(date = new Date()) { return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}` }
 const currentMonth = localDate().slice(0,7)
-const month = ref(currentMonth), page = ref('总览'), mode = ref(localStorage.getItem('pocket-mode') || 'demo'), mobile = ref(false)
+// 使用新的设置键，让旧版浏览器中的演示模式不影响本次默认后端连接。
+const month = ref(currentMonth), page = ref('总览'), mode = ref(localStorage.getItem('pocket-mode-v2') === 'demo' ? 'demo' : 'live'), mobile = ref(false)
 const bills = ref([]), stats = ref(null), trend = ref(null), loading = ref(false), busy = ref(false), error = ref(''), toast = ref('')
 const keyword = ref(''), category = ref(''), input = ref(''), intent = ref('记一笔'), modal = ref(false), draft = ref({}), answer = ref(''), pendingDelete = ref(null), budget = ref(Number(localStorage.getItem('pocket-budget')) || 5000)
 const money = value => Number(value || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -28,7 +29,7 @@ async function load() {
     }
   } catch(e) { bills.value = []; error.value = e.message || '连接失败' } finally { loading.value = false }
 }
-watch([month,mode], () => { localStorage.setItem('pocket-mode',mode.value); load() })
+watch([month,mode], () => { localStorage.setItem('pocket-mode-v2',mode.value); load() })
 watch(budget, value => localStorage.setItem('pocket-budget',String(value)))
 onMounted(load)
 const monthly = computed(() => bills.value.filter(b => b.occurredAt?.startsWith(month.value)))
