@@ -13,20 +13,42 @@ const month = ref(currentMonth), page = ref('总览'), mode = ref(localStorage.g
 const bills = ref([]), stats = ref(null), trend = ref(null), loading = ref(false), busy = ref(false), error = ref(''), toast = ref('')
 const storedBudget = Number(localStorage.getItem('pocket-budget'))
 const keyword = ref(''), category = ref(''), input = ref(''), intent = ref('记一笔'), modal = ref(false), draft = ref({}), answer = ref(''), pendingDelete = ref(null), budget = ref(Number.isFinite(storedBudget) && storedBudget > 0 && storedBudget <= 100000000 ? Math.round(storedBudget * 100) / 100 : 5000)
-const budgetInput = ref(budget.value), budgetError = ref('')
-function saveBudget() {
+const budgetInput = ref(budget.value), budgetError = ref(''), budgetSaving = ref(false), budgetLoading = ref(false), serverBudget = ref(null)
+let budgetVersion = 0
+async function loadBudget() {
+  const version = ++budgetVersion; const selectedMonth = month.value; const selectedMode = mode.value
+  budgetError.value = ''; serverBudget.value = null
+  if(selectedMode === 'demo') { budget.value = Number(localStorage.getItem('pocket-budget')) || 5000; budgetInput.value = budget.value; budgetLoading.value = false; return }
+  budget.value = null; budgetInput.value = ''; budgetLoading.value = true
+  try { const data = await api.budget(selectedMonth); if(version !== budgetVersion) return; serverBudget.value = data.budgets.find(b => b.category == null) || null; budget.value = serverBudget.value?.amount ?? null; budgetInput.value = budget.value ?? '' }
+  catch(e) { if(version === budgetVersion) budgetError.value = '预算读取失败：' + e.message }
+  finally { if(version === budgetVersion) budgetLoading.value = false }
+}
+async function saveBudget() {
+  if(budgetSaving.value || budgetLoading.value) return
   const value = Number(budgetInput.value)
   if (!Number.isFinite(value) || value <= 0 || value > 100000000 || Math.abs(value * 100 - Math.round(value * 100)) > 0.00001) {
     budgetError.value = '请输入大于 0、不超过 1 亿元的金额，最多两位小数'
     return
   }
-  try { localStorage.setItem('pocket-budget', String(value)); budget.value = value; budgetError.value = ''; notify('预算已保存到当前浏览器') }
-  catch { budgetError.value = '无法保存，请检查浏览器是否允许本地存储' }
+  const selectedMonth = month.value, selectedMode = mode.value; const version = ++budgetVersion
+  budgetSaving.value = true; budgetError.value = ''
+  try {
+    if(selectedMode === 'demo') localStorage.setItem('pocket-budget', String(value))
+    else {
+      const data = await api.saveBudget({month:selectedMonth,amount:value,category:null})
+      if(version !== budgetVersion) return
+      serverBudget.value = data.budgets.find(b => b.category == null) || null
+    }
+    if(version === budgetVersion) { budget.value = selectedMode === 'demo' ? value : serverBudget.value?.amount ?? null; budgetInput.value = budget.value ?? ''; notify(selectedMode === 'demo' ? '演示预算已保存到当前浏览器' : selectedMonth + ' 预算已保存到后端') }
+  } catch(e) { if(version === budgetVersion) budgetError.value = '预算保存失败：' + e.message }
+  finally { budgetSaving.value = false }
 }
 const money = value => Number(value || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 function seed() { return Array.from({length:36}, (_, i) => ({ id: i+1, amount: [28,18,128,36,25,68,52,19.9,239,42,12,88][i%12], category: categories[i%8], merchant: ['校园食堂','滴滴出行','生活好物','周末电影','日常生活','健康药房','书店','便利店'][i%8], note: ['午餐，认真吃饭','出门办事','给生活添一点新意','休息一下','日常开销','健康第一','学习投资','随手记录'][i%8], occurredAt: `${currentMonth}-${String(Math.max(1, new Date().getDate() - Math.floor(i/3))).padStart(2,'0')} ${String(10+i%10).padStart(2,'0')}:30:00` })) }
 function notify(text) { toast.value = text; setTimeout(() => { if(toast.value === text) toast.value = '' }, 3500) }
 async function load() {
+  loadBudget()
   loading.value = true; error.value = ''; stats.value = null; trend.value = null
   try {
     if (mode.value === 'demo') { const saved = localStorage.getItem('pocket-bills'); bills.value = saved ? JSON.parse(saved) : seed() }
@@ -46,8 +68,9 @@ const monthly = computed(() => bills.value.filter(b => b.occurredAt?.startsWith(
 const filtered = computed(() => monthly.value.filter(b => (!category.value || b.category===category.value) && `${b.merchant||''}${b.note||''}`.toLowerCase().includes(keyword.value.toLowerCase())).sort((a,b)=>b.occurredAt.localeCompare(a.occurredAt)))
 const total = computed(() => monthly.value.reduce((s,b)=>s+Math.round(Number(b.amount)*100),0)/100)
 const groups = computed(() => stats.value?.items || categories.map(c=>({ category:c,total:monthly.value.filter(b=>b.category===c).reduce((s,b)=>s+Number(b.amount),0),count:monthly.value.filter(b=>b.category===c).length })).filter(x=>x.count).sort((a,b)=>b.total-a.total))
-const spent = computed(() => budget.value>0 ? total.value/budget.value*100 : 0)
-const excess = computed(() => Math.max(0, Math.round(total.value * 100) - Math.round(budget.value * 100)) / 100)
+const spent = computed(() => mode.value === 'live' ? Number(serverBudget.value?.percent || 0) : budget.value>0 ? total.value/budget.value*100 : 0)
+const excess = computed(() => mode.value === 'live' ? Number(serverBudget.value?.excess || 0) : budget.value == null ? 0 : Math.max(0, Math.round(total.value * 100) - Math.round(budget.value * 100)) / 100)
+const remainingBudget = computed(() => mode.value === 'live' ? Number(serverBudget.value?.remaining || 0) : Math.max(0,budget.value-total.value))
 const lineOption = computed(() => {
   let labels, values
   if(page.value==='消费分析' && trend.value) { labels=trend.value.months; values=trend.value.totals }
@@ -111,13 +134,13 @@ function exportCSV(){ const cell=v=>'"'+String(v??'').replaceAll('"','""').repla
         <div class="title-row"><div><div class="eyebrow">YOUR MONEY, A LITTLE CLEARER</div><h1>{{page==='总览'?'生活有记录，花钱有主张。':page==='AI 助手'?'一句话，把账记明白。':page==='账单明细'?'每一笔，都有迹可循。':page==='消费分析'?'看见消费，找到生活的节奏。':'你的账本，你来定义。'}}</h1><p>{{page==='总览'?'欢迎回来，一起看看最近的钱都花在哪儿了。':'让记账成为一件轻松的小事。'}}</p></div><button class="primary" @click="openDraft()"><Plus :size="18"/>记一笔</button></div>
         <div v-if="error" class="error" role="alert">{{error}}。请确认后端已启动，或在设置中切换本地演示。<button @click="load">重试</button></div>
         <template v-if="page==='设置'">
-          <section class="card settings-card"><h2>账本设置</h2><p>演示与真实账本独立保存，切换模式不会迁移数据。</p><label>数据来源<select v-model="mode"><option value="demo">本地演示 · 无需后端</option><option value="live">连接 Spring Boot 后端</option></select></label><form class="budget-form" @submit.prevent="saveBudget" novalidate><label for="budget-amount">每月预算（元）<input id="budget-amount" v-model="budgetInput" type="number" min="0.01" max="100000000" step="0.01" :aria-invalid="!!budgetError" aria-describedby="budget-help budget-error"></label><p id="budget-help" class="budget-help">设置每个月的消费额度，点击保存后生效。</p><p v-if="budgetError" id="budget-error" class="budget-error" role="alert">{{budgetError}}</p><button class="primary" type="submit">保存预算</button></form><div class="notice">预算仅保存在当前浏览器；后端预算接口尚未提供。演示模式中的自然语言提取是本地规则，并非大模型识别。</div></section>
+          <section class="card settings-card"><h2>账本设置</h2><p>演示与真实账本独立保存，切换模式不会迁移数据。</p><label>数据来源<select v-model="mode"><option value="demo">本地演示 · 无需后端</option><option value="live">连接 Spring Boot 后端</option></select></label><form class="budget-form" @submit.prevent="saveBudget" novalidate><label>预算月份<input v-model="month" type="month" :disabled="budgetSaving"></label><label for="budget-amount">月度总预算（元）<input id="budget-amount" :disabled="budgetLoading || budgetSaving" v-model="budgetInput" type="number" min="0.01" max="100000000" step="0.01" :aria-invalid="!!budgetError" aria-describedby="budget-help budget-error"></label><p id="budget-help" class="budget-help">{{budgetLoading?'正在读取预算…':budget == null?'本月尚未设置总预算，填写后保存。':'设置所选月份的总消费额度，点击保存后生效。'}}</p><p v-if="budgetError" id="budget-error" class="budget-error" role="alert">{{budgetError}}</p><button class="primary" type="submit" :disabled="budgetLoading || budgetSaving">{{budgetSaving?'保存中…':'保存预算'}}</button></form><div class="notice">{{mode==='live'?'预算按月份保存到后端；当前设置的是总预算。':'演示预算仅保存在当前浏览器，不会上传后端。'}}演示模式中的自然语言提取是本地规则，并非大模型识别。</div></section>
         </template>
         <template v-else>
           <section v-if="['总览','AI 助手'].includes(page)" class="ai-card"><div class="ai-heading"><span class="sparkle"><Sparkles :size="22"/></span><div><h2>记账这件事，交给小账 AI <span>BETA</span></h2><p>一句话记消费，一张图识小票。少一点操作，多一点生活。</p></div><span class="ai-decoration">✳</span></div><form @submit.prevent="submit"><div class="ai-input"><input v-model="input" :placeholder="intent==='记一笔'?'试试说：今天午饭花了 28 元，在学校食堂':'试试问：上个月餐饮一共花了多少？'" aria-label="AI 输入"><button class="send" :disabled="busy||!input.trim()" aria-label="发送"><Send :size="19"/></button></div></form><div class="ai-footer"><div class="tabs"><button v-for="i in ['记一笔','查消费']" :class="{selected:intent===i}" @click="intent=i">{{i==='记一笔'?'✦':'⌕'}} {{i}}</button><label class="upload"><Upload :size="14"/>识别小票<input type="file" accept="image/jpeg,image/png,image/webp" :disabled="busy" @change="upload"></label></div><span>{{busy?'正在处理，请稍候…':'识别后由你确认，再保存入账'}}</span></div><p v-if="answer" class="answer" aria-live="polite">{{answer}}</p><div v-if="page==='AI 助手'" class="suggestions"><button v-for="s in ['今天坐地铁花了6元','这个月购物花了多少','昨天买咖啡花了22元']" @click="input=s;intent=s.includes('多少')?'查消费':'记一笔'">{{s}} <ArrowUpRight :size="15"/></button></div></section>
           <template v-if="page!=='AI 助手'">
             <div class="section-bar"><h2>{{page==='账单明细'?'账单记录':'收支概览'}} <span>{{mode==='demo'?'DEMO DATA':'MY LEDGER'}}</span></h2><input class="month" type="month" v-model="month" aria-label="选择月份"></div>
-            <div class="metrics"><section class="metric dark"><div><span>本月总支出</span><Wallet :size="19"/></div><h3><small>¥</small>{{money(total)}}</h3><p><span class="metric-chip">{{monthly.length}} 笔记录</span> 每一笔，都值得被看见</p><div class="metric-orbit"></div></section><section class="metric"><div><span>日均消费</span><ArrowUpRight :size="19"/></div><h3><small>¥</small>{{money(total/(month===currentMonth?new Date().getDate():new Date(Number(month.slice(0,4)),Number(month.slice(5)),0).getDate()))}}</h3><p>按所选月份已过天数计算</p></section><section :class="['metric', {'over-budget':excess>0&&!loading&&!error}]"><div><span>{{excess>0?'本月已超支':'本月预算剩余'}}</span><Leaf :size="19"/></div><h3><small>¥</small>{{money(excess>0?excess:budget-total)}}</h3><div class="progress"><i :style="{width:Math.min(spent,100)+'%',background:spent>100?'#c4735e':''}"></i></div><p>{{spent>100?'已超出预算':'已使用预算'}} {{spent.toFixed(1)}}% <button class="text-button" @click="page='设置'">调整</button></p></section></div>
+            <div class="metrics"><section class="metric dark"><div><span>本月总支出</span><Wallet :size="19"/></div><h3><small>¥</small>{{money(total)}}</h3><p><span class="metric-chip">{{monthly.length}} 笔记录</span> 每一笔，都值得被看见</p><div class="metric-orbit"></div></section><section class="metric"><div><span>日均消费</span><ArrowUpRight :size="19"/></div><h3><small>¥</small>{{money(total/(month===currentMonth?new Date().getDate():new Date(Number(month.slice(0,4)),Number(month.slice(5)),0).getDate()))}}</h3><p>按所选月份已过天数计算</p></section><section :class="['metric', {'over-budget':excess>0&&!loading&&!error}]"><div><span>{{budgetLoading?'预算读取中':budget == null?'本月预算未设置':excess>0?'本月已超支':'本月预算剩余'}}</span><Leaf :size="19"/></div><h3><small>¥</small>{{budget == null?'—':money(excess>0?excess:remainingBudget)}}</h3><div class="progress"><i :style="{width:Math.min(spent,100)+'%',background:spent>100?'#c4735e':''}"></i></div><p>{{spent>100?'已超出预算':'已使用预算'}} {{spent.toFixed(1)}}% <button class="text-button" @click="page='设置'">调整</button></p></section></div>
             <div v-if="excess>0&&!loading&&!error" class="budget-alert" role="alert"><span class="budget-alert-symbol">!</span><div><strong>{{month}} 已超支 ¥{{money(excess)}}</strong><p>预算 ¥{{money(budget)}} · 已支出 ¥{{money(total)}}。可以适当调整接下来的消费。</p></div><button class="secondary" @click="page='设置'">调整预算</button></div><div v-if="page!=='账单明细'" class="charts-grid"><section class="card trend-card"><div class="card-heading"><div><h2>{{page==='消费分析'&&trend?'月度支出趋势':'每日消费趋势'}}</h2><p>给消费一点觉察，让生活多一份从容</p></div><span class="legend"><i></i>支出金额</span></div><Chart :option="lineOption"/><div v-if="!monthly.length&&!trend" class="empty">本月还没有消费记录</div></section><section class="card category-card"><div class="card-heading"><h2>钱都花在哪儿</h2><SlidersHorizontal :size="17"/></div><div class="pie-wrap"><Chart :option="pieOption"/><div class="pie-label"><small>支出分布</small><strong>{{groups.length}}<small> 类</small></strong></div></div><div class="category-legend"><div v-for="g in groups.slice(0,4)"><i :style="{background:colors[categories.indexOf(g.category)]}"></i><span>{{g.category}}</span><b>{{money(g.total)}}</b></div></div><p v-if="!groups.length" class="empty">记下第一笔，开始了解自己</p></section></div>
             <section class="card bills-card"><div class="card-heading"><div><h2>{{page==='账单明细'?'全部账单':'最近账单'}} <span class="count">{{filtered.length}}</span></h2><p>认真记录，生活中的每一个小日常</p></div><button class="secondary" @click="exportCSV"><Download :size="15"/>导出账单</button></div><div class="filters"><label class="search"><Search :size="17"/><input v-model="keyword" placeholder="搜索商户或备注…" aria-label="搜索账单"></label><select v-model="category" aria-label="筛选分类"><option value="">全部分类</option><option v-for="c in categories">{{c}}</option></select><button v-if="keyword||category" class="text-button" @click="keyword='';category=''">清除筛选</button><span class="filter-total">筛选合计 ¥{{money(filtered.reduce((s,b)=>s+Number(b.amount),0))}}</span></div><div class="table-scroll"><table><thead><tr><th>消费项目</th><th>分类</th><th>消费时间</th><th>金额</th><th></th></tr></thead><tbody><tr v-for="bill in (page==='账单明细'?filtered:filtered.slice(0,5))" :key="bill.id"><td><div class="merchant"><span class="category-icon" :style="{background:colors[categories.indexOf(bill.category)]+'22'}">{{icons[categories.indexOf(bill.category)]||'🧾'}}</span><div><b>{{bill.merchant||bill.category}}</b><small>{{bill.note||'日常消费'}}</small></div></div></td><td><span class="tag">{{bill.category}}</span></td><td class="date">{{bill.occurredAt?.slice(0,16)}}</td><td class="amount">− ¥{{money(bill.amount)}}</td><td><button class="delete icon" aria-label="删除账单" @click="pendingDelete=bill.id"><Trash2 :size="15"/></button></td></tr></tbody></table><div v-if="loading" class="empty">正在加载账本…</div><div v-else-if="!filtered.length" class="empty"><ReceiptText :size="28"/><p>{{keyword||category?'没有找到匹配账单':'还没有账单，记录今天的第一笔吧。'}}</p><button class="text-button" @click="openDraft()">添加一笔消费</button></div></div><button v-if="page!=='账单明细'&&filtered.length>5" class="table-footer" @click="page='账单明细'">查看全部账单 <ChevronRight :size="14"/></button></section>
           </template>

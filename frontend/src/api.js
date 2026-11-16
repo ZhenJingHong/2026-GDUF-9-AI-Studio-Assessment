@@ -19,6 +19,8 @@ export async function request(path, { method = 'GET', body, query } = {}) {
   } finally { clearTimeout(timer) }
 }
 export const api = {
+  budget: month => request('/budget', { query: { month } }),
+  saveBudget: body => request('/budget', { method: 'POST', body }),
   bills: query => request('/bill', { query }),
   add: body => request('/bill', { method: 'POST', body }),
   remove: id => request(`/bill/${encodeURIComponent(id)}`, { method: 'DELETE' }),
