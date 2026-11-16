@@ -2,6 +2,10 @@ package com.example.backend.budget;
 
 import java.math.BigDecimal;
 import java.time.YearMonth;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
 import java.time.format.DateTimeParseException;
 import java.util.regex.Pattern;
 
@@ -9,6 +13,8 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -16,7 +22,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 
-import com.example.backend.budget.BudgetService.BudgetMonth;
+import com.example.backend.budget.BudgetService.*;
 import com.example.backend.common.ApiResponse;
 
 import tools.jackson.core.JacksonException;
@@ -83,6 +89,71 @@ public class BudgetController {
         }
 
         return ResponseEntity.ok(ApiResponse.ok(service.save(month, category, amount.setScale(2))));
+    }
+
+    @GetMapping("/defaults")
+    public ApiResponse<Defaults> defaults() {
+        return ApiResponse.ok(service.defaults());
+    }
+
+    @PutMapping("/defaults")
+    public ApiResponse<Defaults> saveDefaults(@RequestBody String body) {
+        return ApiResponse.ok(service.saveDefaults(parseAmounts(body)));
+    }
+
+    @GetMapping("/month")
+    public ApiResponse<MonthSnapshot> month(@RequestParam(required = false) String month) {
+        return ApiResponse.ok(service.snapshot(requiredMonth(month)));
+    }
+
+    @PutMapping("/month")
+    public ApiResponse<MonthSnapshot> saveMonth(@RequestParam(required = false) String month, @RequestBody String body) {
+        return ApiResponse.ok(service.saveMonth(requiredMonth(month), parseAmounts(body)));
+    }
+
+    @DeleteMapping("/month")
+    public ApiResponse<MonthSnapshot> restoreMonth(@RequestParam(required = false) String month) {
+        return ApiResponse.ok(service.restoreMonth(requiredMonth(month)));
+    }
+
+    private List<Amount> parseAmounts(String body) {
+        JsonNode entries = requestReader.<JsonNode>readValue(body).path("budgets");
+        if (!entries.isArray() || entries.size() > BudgetService.CATEGORIES.size() + 1) {
+            throw new IllegalArgumentException("budgets 必须是预算数组");
+        }
+        Set<String> categories = new HashSet<>();
+        List<Amount> amounts = new ArrayList<>();
+        for (JsonNode entry : entries) {
+            JsonNode field = entry.path("category");
+            if (!field.isNull() && (!field.isString() || !BudgetService.CATEGORIES.contains(field.stringValue()))) {
+                throw new IllegalArgumentException("分类不在枚举内");
+            }
+            String category = field.isNull() ? null : field.stringValue();
+            if (!categories.add(category)) {
+                throw new IllegalArgumentException("同一范围只能设置一次预算");
+            }
+            JsonNode amountNode = entry.path("amount");
+            BigDecimal amount = amountNode.isNumber() ? amountNode.decimalValue() : null;
+            if (amount == null || amount.compareTo(MIN_AMOUNT) < 0 || amount.compareTo(MAX_AMOUNT) > 0
+                    || amount.stripTrailingZeros().scale() > 2) {
+                throw new IllegalArgumentException("金额必须为 0.01 至 100000000.00 的数字，最多两位有效小数");
+            }
+            amounts.add(new Amount(category, amount.setScale(2)));
+        }
+        return amounts;
+    }
+
+    private static YearMonth requiredMonth(String month) {
+        YearMonth parsed = parseMonth(month);
+        if (parsed == null) {
+            throw new IllegalArgumentException("月份必须为有效的 YYYY-MM");
+        }
+        return parsed;
+    }
+
+    @ExceptionHandler(IllegalArgumentException.class)
+    ResponseEntity<ApiResponse<BudgetMonth>> invalidArgument(IllegalArgumentException exception) {
+        return badRequest(40001, exception.getMessage());
     }
 
     @ExceptionHandler({JacksonException.class, HttpMessageNotReadableException.class})
