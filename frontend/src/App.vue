@@ -4,6 +4,7 @@ import { Wallet, LayoutDashboard, ArrowUpRight, Plus, Search, Sparkles, SlidersH
 import Chart from './components/Chart.vue'
 import { api } from './api'
 import LedgerChat from './components/LedgerChat.vue'
+import ManualBill from './components/ManualBill.vue'
 import BudgetForm from './components/BudgetForm.vue'
 import { budgetStore } from './budgets'
 const categories = ['餐饮','交通','购物','娱乐','居住','医疗','教育','其他']
@@ -15,6 +16,9 @@ const currentMonth = localDate().slice(0,7)
 const month = ref(currentMonth), page = ref('总览'), mode = ref(localStorage.getItem('pocket-mode-v2') === 'demo' ? 'demo' : 'live'), mobile = ref(false)
 const bills = ref([]), stats = ref(null), trend = ref(null), loading = ref(false), busy = ref(false), error = ref(''), toast = ref('')
 const keyword = ref(''), category = ref(''), pendingDelete = ref(null)
+const manual = ref(null)
+function openManual() { manual.value = { mode:mode.value, month:month.value } }
+function manualRecorded(source) { notify('这笔消费，记好啦'); recorded(source) }
 const chat = ref(null), settingsMonth = ref(currentMonth), editorMonth = ref('')
 const budgetSnapshot = ref(null), budgetError = ref(''), defaultsVersion = ref(0)
 const budgetStatus = { NORMAL: '', NEAR: '接近预算', AT_LIMIT: '已用完', OVER: '超支' }
@@ -152,7 +156,7 @@ function exportCSV(){ const cell=v=>'"'+String(v??'').replaceAll('"','""').repla
     <main>
       <header><div class="breadcrumb"><button class="icon mobile-menu" aria-label="打开导航" @click="mobile=!mobile"><Menu/></button>我的工作台 <ChevronRight :size="13"/> <b>{{page}}</b></div><div class="header-right"><span :class="['status',{live:mode==='live'}]"><i></i>{{mode==='demo'?'本地演示模式':'后端连接模式'}}</span><span class="avatar small">我</span></div></header>
       <div class="content">
-        <div class="title-row"><div><div class="eyebrow">YOUR MONEY, A LITTLE CLEARER</div><h1>{{page==='总览'?'生活有记录，花钱有主张。':page==='AI 助手'?'一句话，把账记明白。':page==='账单明细'?'每一笔，都有迹可循。':page==='消费分析'?'看见消费，找到生活的节奏。':'你的账本，你来定义。'}}</h1><p>{{page==='总览'?'欢迎回来，一起看看最近的钱都花在哪儿了。':'让记账成为一件轻松的小事。'}}</p></div><button v-if="page!=='AI 助手'" class="primary" @click="openChat()"><Plus :size="18"/>记一笔</button></div>
+        <div class="title-row"><div><div class="eyebrow">YOUR MONEY, A LITTLE CLEARER</div><h1>{{page==='总览'?'生活有记录，花钱有主张。':page==='AI 助手'?'一句话，把账记明白。':page==='账单明细'?'每一笔，都有迹可循。':page==='消费分析'?'看见消费，找到生活的节奏。':'你的账本，你来定义。'}}</h1><p>{{page==='总览'?'欢迎回来，一起看看最近的钱都花在哪儿了。':'让记账成为一件轻松的小事。'}}</p></div><div class="entry-actions"><button class="secondary" @click="openChat()"><Sparkles :size="17"/>AI 对话记账</button><button class="primary" @click="openManual()"><Plus :size="18"/>手动记一笔</button></div></div>
         <div v-if="error" class="error" role="alert">{{error}}。请确认后端已启动，或在设置中切换本地演示。<button @click="load">重试</button></div>
         <LedgerChat v-show="page === 'AI 助手'" ref="chat" :mode="mode" :month="month"
           :categories="categories" :money="money" :demo-bills="demoBills" :save-demo="saveDemo" @recorded="recorded"/>
@@ -194,12 +198,13 @@ function exportCSV(){ const cell=v=>'"'+String(v??'').replaceAll('"','""').repla
               <small v-if="page==='消费分析' && budgetStatus[categoryBudgets[g.category]?.status]"
                 class="budget-tag" :class="categoryBudgets[g.category].status">{{budgetStatus[categoryBudgets[g.category].status]}}</small>
               </span><b>{{money(g.total)}}</b></div></div><p v-if="!groups.length" class="empty">记下第一笔，开始了解自己</p></section></div>
-            <section class="card bills-card"><div class="card-heading"><div><h2>{{page==='账单明细'?'全部账单':'最近账单'}} <span class="count">{{filtered.length}}</span></h2><p>认真记录，生活中的每一个小日常</p></div><button class="secondary" @click="exportCSV"><Download :size="15"/>导出账单</button></div><div class="filters"><label class="search"><Search :size="17"/><input v-model="keyword" placeholder="搜索商户或备注…" aria-label="搜索账单"></label><select v-model="category" aria-label="筛选分类"><option value="">全部分类</option><option v-for="c in categories">{{c}}</option></select><button v-if="keyword||category" class="text-button" @click="keyword='';category=''">清除筛选</button><span class="filter-total">筛选合计 ¥{{money(filtered.reduce((s,b)=>s+Number(b.amount),0))}}</span></div><div class="table-scroll"><table><thead><tr><th>消费项目</th><th>分类</th><th>消费时间</th><th>金额</th><th></th></tr></thead><tbody><tr v-for="bill in (page==='账单明细'?filtered:filtered.slice(0,5))" :key="bill.id"><td><div class="merchant"><span class="category-icon" :style="{background:colors[categories.indexOf(bill.category)]+'22'}">{{icons[categories.indexOf(bill.category)]||'🧾'}}</span><div><b>{{bill.merchant||bill.category}}</b><small>{{bill.note||'日常消费'}}</small></div></div></td><td><span class="tag">{{bill.category}}</span></td><td class="date">{{bill.occurredAt?.slice(0,16)}}</td><td class="amount">− ¥{{money(bill.amount)}}</td><td><button class="delete icon" aria-label="删除账单" @click="pendingDelete=bill.id"><Trash2 :size="15"/></button></td></tr></tbody></table><div v-if="loading" class="empty">正在加载账本…</div><div v-else-if="!filtered.length" class="empty"><ReceiptText :size="28"/><p>{{keyword||category?'没有找到匹配账单':'还没有账单，记录今天的第一笔吧。'}}</p><button class="text-button" @click="openChat()">添加一笔消费</button></div></div><button v-if="page!=='账单明细'&&filtered.length>5" class="table-footer" @click="page='账单明细'">查看全部账单 <ChevronRight :size="14"/></button></section>
+            <section class="card bills-card"><div class="card-heading"><div><h2>{{page==='账单明细'?'全部账单':'最近账单'}} <span class="count">{{filtered.length}}</span></h2><p>认真记录，生活中的每一个小日常</p></div><button class="secondary" @click="exportCSV"><Download :size="15"/>导出账单</button></div><div class="filters"><label class="search"><Search :size="17"/><input v-model="keyword" placeholder="搜索商户或备注…" aria-label="搜索账单"></label><select v-model="category" aria-label="筛选分类"><option value="">全部分类</option><option v-for="c in categories">{{c}}</option></select><button v-if="keyword||category" class="text-button" @click="keyword='';category=''">清除筛选</button><span class="filter-total">筛选合计 ¥{{money(filtered.reduce((s,b)=>s+Number(b.amount),0))}}</span></div><div class="table-scroll"><table><thead><tr><th>消费项目</th><th>分类</th><th>消费时间</th><th>金额</th><th></th></tr></thead><tbody><tr v-for="bill in (page==='账单明细'?filtered:filtered.slice(0,5))" :key="bill.id"><td><div class="merchant"><span class="category-icon" :style="{background:colors[categories.indexOf(bill.category)]+'22'}">{{icons[categories.indexOf(bill.category)]||'🧾'}}</span><div><b>{{bill.merchant||bill.category}}</b><small>{{bill.note||'日常消费'}}</small></div></div></td><td><span class="tag">{{bill.category}}</span></td><td class="date">{{bill.occurredAt?.slice(0,16)}}</td><td class="amount">− ¥{{money(bill.amount)}}</td><td><button class="delete icon" aria-label="删除账单" @click="pendingDelete=bill.id"><Trash2 :size="15"/></button></td></tr></tbody></table><div v-if="loading" class="empty">正在加载账本…</div><div v-else-if="!filtered.length" class="empty"><ReceiptText :size="28"/><p>{{keyword||category?'没有找到匹配账单':'还没有账单，记录今天的第一笔吧。'}}</p><button class="text-button" @click="openManual()">添加一笔消费</button></div></div><button v-if="page!=='账单明细'&&filtered.length>5" class="table-footer" @click="page='账单明细'">查看全部账单 <ChevronRight :size="14"/></button></section>
           </template>
         </template>
         <footer><span><Leaf :size="14"/> 钱花得明白，生活过得自在。</span><span>小账 POCKET AI · 记录生活的分寸</span></footer>
       </div>
     </main>
+    <ManualBill v-if="manual" :mode="manual.mode" :month="manual.month" :categories="categories" :save-demo="saveDemo" @close="manual=null" @recorded="manualRecorded"/>
     <div v-if="pendingDelete!==null" class="overlay"><section class="dialog compact" role="alertdialog" aria-modal="true"><h2>删除这笔账单？</h2><p>删除后无法恢复，请确认这笔记录不再需要。</p><div class="dialog-actions"><button class="secondary" :disabled="busy" @click="pendingDelete=null">取消</button><button class="danger" :disabled="busy" @click="remove">{{busy?'删除中…':'确认删除'}}</button></div></section></div>
     <div v-if="toast" class="toast" role="status">{{toast}}</div>
   </div>
