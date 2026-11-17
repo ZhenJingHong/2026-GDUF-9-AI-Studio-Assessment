@@ -101,6 +101,7 @@ public class AiClient {
 
     /** 模型名，如 deepseek-flash */
     private final String model;
+    private final boolean configured;
 
     public AiClient(@Value("${ai.base-url}") String baseUrl,
                     @Value("${ai.api-key}") String apiKey,
@@ -110,6 +111,7 @@ public class AiClient {
                 .defaultHeader("Authorization", "Bearer " + apiKey)
                 .build();
         this.model = model;
+        this.configured = apiKey != null && !apiKey.isBlank();
     }
 
     /** 普通对话，返回纯文本，仅用于自测链路 */
@@ -246,6 +248,9 @@ public class AiClient {
      */
     @SuppressWarnings("unchecked")
     private String requestMessages(List<Map<String, Object>> messages, boolean jsonMode) {
+        if (!configured) {
+            throw new IllegalStateException("未配置 DeepSeek API Key。请在启动后端前设置 AI_API_KEY 或 DEEPSEEK_API_KEY，然后重启后端。");
+        }
         Map<String, Object> requestBody = new HashMap<>();
         requestBody.put("model", model);
         requestBody.put("temperature", 0.2);
