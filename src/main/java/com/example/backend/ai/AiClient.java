@@ -53,7 +53,7 @@ public class AiClient {
 
             JSON 字段：
             - amount：数字，金额（单位：元）。无法确定时填 null。
-            - category：字符串，只能是以下九个之一：餐饮、交通、购物、娱乐、居住、医疗、教育、其他。无法确定时填 null。
+            - category：字符串，只能是以下八个之一：餐饮、交通、购物、娱乐、居住、医疗、教育、其他。无法确定时填 null。
             - merchant：字符串，商户名。没有提到时填 null。
             - occurredAt：字符串，消费时间，格式 yyyy-MM-dd HH:mm:ss。按上面的时间规则换算。
             - note：字符串，原文的简短摘要。
@@ -84,7 +84,7 @@ public class AiClient {
 
             JSON 字段：
             - amount：数字，这笔订单的实付总金额（单位：元）。识别不出填 null。
-            - category：字符串，只能是以下九个之一：餐饮、交通、购物、娱乐、居住、医疗、教育、其他。识别不出填 null。
+            - category：字符串，只能是以下八个之一：餐饮、交通、购物、娱乐、居住、医疗、教育、其他。识别不出填 null。
             - merchant：字符串，商户名称。没有填 null。
             - occurredAt：字符串，消费时间，格式 yyyy-MM-dd HH:mm:ss。小票上没有时间就填 null。
             - note：字符串，简要说明买了什么。
