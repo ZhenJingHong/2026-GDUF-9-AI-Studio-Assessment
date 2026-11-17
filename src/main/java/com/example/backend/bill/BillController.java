@@ -34,7 +34,7 @@ public class BillController {
             return ApiResponse.fail(40001, "金额必须大于0");
         }
 
-        // 2. 校验 category 必须在九个枚举内
+        // 2. 校验 category 必须在八个枚举内
         if (bill.getCategory() == null || !CATEGORIES.contains(bill.getCategory())) {
             return ApiResponse.fail(40002, "分类不在枚举内");
         }

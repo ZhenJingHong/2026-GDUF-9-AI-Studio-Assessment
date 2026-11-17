@@ -21,7 +21,7 @@ public class Bill {
     @Column(nullable = false, precision = 12, scale = 2)
     private BigDecimal amount;
 
-    /** 分类，必须是九个枚举之一 */
+    /** 分类，必须是八个枚举之一 */
     @Column(nullable = false, length = 16)
     private String category;
 
