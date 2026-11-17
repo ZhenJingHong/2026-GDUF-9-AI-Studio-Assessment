@@ -3,6 +3,7 @@ import { computed, nextTick, reactive, ref, watch } from 'vue'
 import { Send, Upload, Trash2, Plus } from 'lucide-vue-next'
 import { api } from '../api'
 import { demoPlan } from '../chatDemo'
+import { displayBillTime, normalizeTime, shanghaiTime } from '../billTime'
 
 const props = defineProps({
   mode: String, month: String, categories: Array, money: Function, demoBills: Function, saveDemo: Function,
@@ -74,7 +75,7 @@ function saveAction(session, draft, query) {
   session.action = {
     stage: 'save', actionId: crypto.randomUUID(), query,
     bill: {
-      amount: draft.amount, category: draft.category, occurredAt: draft.occurredAt,
+      amount: draft.amount, category: draft.category, occurredAt: draft.occurredAt, timePrecision: draft.timePrecision,
       merchant: draft.merchant || null, note: draft.note || null,
     },
   }
@@ -119,10 +120,35 @@ async function queryLedger(session, spec) {
   return `${label}\n支出：¥${props.money(cents / 100)}`
 }
 
+async function prepareCorrection(session,text) {
+  const amountText=text.match(/(?:改成|改为|改到|更正为|是)\s*(\d+(?:\.\d{1,2})?)/)?.[1]
+  if(!amountText || !(Number(amountText)>0)) { addMessage(session,'assistant','更正不会新增账单。请说明要改哪一笔，例如“昨天那笔改成40元”或“#33 改成40元”。');return }
+  const ids=new Set(session.messages.filter(m=>m.role==='assistant').flatMap(m=>[...m.content.matchAll(/#([A-Za-z0-9-]+)/g)].map(x=>x[1])))
+  const rows=session.mode==='demo'?props.demoBills():await api.bills({})
+  const id=text.match(/#([A-Za-z0-9-]+)/)?.[1]
+  const offset=text.includes('前天')?2:text.includes('昨天')?1:0
+  const day=/昨天|前天|今天/.test(text)?shanghaiTime(Date.now()-offset*86400000).slice(0,10):text.match(/\d{4}-\d{2}-\d{2}/)?.[0]
+  const matches=rows.filter(b=>ids.has(String(b.id))&&(!id||String(b.id)===id)&&(!day||b.occurredAt.startsWith(day)))
+  if(matches.length!==1) { addMessage(session,'assistant',matches.length?'找到多笔记录，请用账单编号指定：'+matches.map(b=>'#'+b.id+' '+displayBillTime(b)+' ¥'+props.money(b.amount)).join('；'):'本会话没有找到可更正的原账单，请先核对账单编号。未新增任何记录。');return }
+  session.correction={bill:matches[0],amount:Number(amountText)}
+}
+async function confirmCorrection() {
+  const session=current.value,c=session.correction
+  if(!c||jobs.has(session.id))return
+  await run(session,async()=>{
+    if(session.mode==='demo') { const rows=props.demoBills(); const row=rows.find(b=>b.id===c.bill.id);if(!row)throw Error('原账单不存在');row.amount=c.amount;localStorage.setItem('pocket-bills',JSON.stringify(rows)) }
+    else await api.updateAmount(c.bill.id,c.amount)
+    addMessage(session,'assistant','已更正原账单 #'+c.bill.id+'：¥'+props.money(c.bill.amount)+' → ¥'+props.money(c.amount)+'，没有新增账单。')
+    session.correction=null;emit('recorded',session.mode)
+  })
+}
 async function runAction(session) {
   if (session.action?.stage === 'parse') {
     const { request, month } = session.action
-    const plan = session.mode === 'demo' ? demoPlan(request, props.categories, month) : await api.chat(request)
+    const apiRequest = {text:request.text,history:request.history,pending:request.pending ? {...request.pending,draft:request.pending.draft ? Object.fromEntries(Object.entries(request.pending.draft).filter(([k])=>k!=='timePrecision')) : null} : null}
+    const plan = session.mode === 'demo' ? demoPlan(request, props.categories, month) : await api.chat(apiRequest)
+    if(plan.draft) plan.draft=normalizeTime(plan.draft,request,request.pending?.draft)
+    if(plan.pending?.draft) plan.pending.draft=plan.draft || normalizeTime(plan.pending.draft,request,request.pending?.draft)
     session.action = null
     session.pending = plan.pending || null
     if (plan.kind === 'RECORD' || plan.kind === 'RECORD_THEN_QUERY') {
@@ -139,7 +165,7 @@ async function runAction(session) {
     const receipt = session.mode === 'demo' ? props.saveDemo(actionId, bill) : await api.chatRecord({ actionId, bill })
     session.pending = null
     session.action = query ? { stage: 'query', query } : null
-    addMessage(session, 'assistant', `${session.mode === 'demo' ? '演示账本' : '已入账'} · #${receipt.billId}\n${bill.occurredAt} · ${bill.category} · ¥${props.money(bill.amount)}`)
+    addMessage(session, 'assistant', `${session.mode === 'demo' ? '演示账本' : '已入账'} · #${receipt.billId}\n${displayBillTime(bill)} · ${bill.category} · ¥${props.money(bill.amount)}`)
     persist()
     emit('recorded', session.mode)
   }
@@ -168,10 +194,15 @@ function submit() {
   const session = current.value
   const text = session.input.trim()
   if (!text || session.action || jobs.has(session.id)) return
+  if(session.correction) { session.error='请先确认或取消正在更正的账单'; return }
+  if(/改|更正|记错|不是/.test(text) && !session.pending) {
+    session.input=''; addMessage(session,'user',text)
+    run(session,()=>prepareCorrection(session,text)); return
+  }
   const userMessages = session.messages.flatMap((message, index) => message.role === 'user' ? [index] : [])
   const start = userMessages.at(-6) ?? 0
   const history = session.messages.slice(start).map(({ role, content }) => ({ role, content }))
-  session.action = { stage: 'parse', month: props.month, request: { text, history, pending: session.pending } }
+  session.action = { stage: 'parse', month: props.month, request: { text, history, pending: session.pending, sentAt: Date.now() } }
   session.input = ''
   addMessage(session, 'user', text)
   run(session, () => runAction(session))
@@ -232,7 +263,7 @@ async function upload(event) {
           {{ mode === 'demo' ? '本地演示 · ' : '' }}试试「昨天午饭花了 25 元」或「这个月花了多少」。
         </p>
         <div v-for="(message, index) in current.messages" :key="index" class="chat-message"
-          :class="'chat-' + message.role">{{ message.content }}</div>
+          :class="'chat-' + message.role">{{ message.content.replace(/(\d{4}-\d{2}-\d{2}) 00:00:00/g,'$1（时间未指定）') }}</div>
         <div v-if="current.pending?.draft" class="chat-draft">
           <strong>{{ current.pending.source === 'RECEIPT' ? '小票账单' : '待补充账单' }}</strong>
           <p>{{ current.pending.draft.amount == null ? '金额待补' : '¥' + money(current.pending.draft.amount) }}
@@ -244,6 +275,7 @@ async function upload(event) {
             type="button" :disabled="jobs.has(current.id) || !!current.action" @click="confirmReceipt">确认入账</button>
         </div>
       </div>
+      <div v-if="current.correction" class="notice" role="status"><p>更正原账单 #{{current.correction.bill.id}} · {{displayBillTime(current.correction.bill)}}</p><p>¥{{money(current.correction.bill.amount)}} → ¥{{money(current.correction.amount)}}，确认后更新原记录，不新增。</p><button class="primary" type="button" :disabled="jobs.has(current.id)" @click="confirmCorrection">确认更正</button><button class="secondary" type="button" :disabled="jobs.has(current.id)" @click="current.correction=null">取消更正</button></div>
       <p v-if="current.error || storageError" class="budget-error" role="alert">{{ current.error || storageError }}</p>
       <p v-if="jobs.has(current.id)" role="status">正在处理…</p>
       <button v-else-if="current.action" class="secondary" type="button" @click="retry">

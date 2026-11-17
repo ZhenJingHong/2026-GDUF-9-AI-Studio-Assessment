@@ -17,7 +17,7 @@ async function save() {
   if(!Number.isFinite(amount) || amount<=0 || amount>9999999999.99 || Math.abs(amount*100-Math.round(amount*100))>0.00001 || !props.categories.includes(d.category) || !d.occurredAt) {
     error.value='请填写有效金额（最多两位小数）、分类和消费时间'; return
   }
-  const bill={ amount,category:d.category,merchant:d.merchant.trim()||null,note:d.note.trim()||null,occurredAt:d.occurredAt.replace('T',' ')+':00' }
+  const bill={ amount,category:d.category,merchant:d.merchant.trim()||null,note:d.note.trim()||null,occurredAt:d.occurredAt.replace('T',' ')+':00',timePrecision:'EXACT' }
   // 网络失败时原样重试沿用动作ID，防止重复入账；修改表单后创建新动作。
   const payload=JSON.stringify(bill)
   if(lastPayload && payload!==lastPayload) actionId=crypto.randomUUID()

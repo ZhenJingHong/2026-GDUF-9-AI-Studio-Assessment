@@ -53,6 +53,19 @@ public class BillController {
     }
 
     /** 查询账单列表，支持按月份、分类、关键词筛选 */
+    @PutMapping("/{id}/amount")
+    public ApiResponse<Bill> updateAmount(@PathVariable Long id, @RequestBody java.util.Map<String, java.math.BigDecimal> body) {
+        java.math.BigDecimal amount = body.get("amount");
+        if (amount == null || amount.signum() <= 0 || amount.stripTrailingZeros().scale() > 2
+                || amount.compareTo(new java.math.BigDecimal("9999999999.99")) > 0) {
+            return ApiResponse.fail(40001, "请输入有效金额，最多两位小数");
+        }
+        return repository.findById(id).map(bill -> {
+            bill.setAmount(amount);
+            return ApiResponse.ok(repository.save(bill));
+        }).orElseGet(() -> ApiResponse.fail(40401, "原账单不存在，无法更正"));
+    }
+
     @GetMapping
     public ApiResponse<List<Bill>> list(
             @RequestParam(required = false) String month,

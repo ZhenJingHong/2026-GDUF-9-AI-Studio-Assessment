@@ -19,6 +19,7 @@ export async function request(path, { method = 'GET', body, query } = {}) {
   } finally { clearTimeout(timer) }
 }
 export const api = {
+  updateAmount: (id, amount) => request(`/bill/${encodeURIComponent(id)}/amount`, { method: 'PUT', body: { amount } }),
   budget: month => request('/budget', { query: { month } }),
   saveBudget: body => request('/budget', { method: 'POST', body }),
   bills: query => request('/bill', { query }),

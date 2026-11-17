@@ -18,7 +18,7 @@ import java.util.UUID;
 @Service
 class ChatRecords {
     record Request(UUID actionId, BillInput bill) {}
-    record BillInput(BigDecimal amount, String category, String occurredAt, String merchant, String note) {}
+    record BillInput(BigDecimal amount, String category, String occurredAt, String merchant, String note, String timePrecision) {}
     record Receipt(Long billId) {}
 
     private final BillRepository bills;
@@ -45,7 +45,7 @@ class ChatRecords {
             throw new IllegalArgumentException("请输入有效的金额（最多两位小数）、分类和消费日期，并检查商户和备注长度");
         }
         String digest = digest(new BillInput(draft.amount().setScale(2), input.category(), input.occurredAt(),
-                input.merchant(), input.note()));
+                input.merchant(), input.note(), input.timePrecision()));
         return transaction.execute(status -> {
             ChatRecordAction action = entities.find(ChatRecordAction.class, request.actionId());
             if (action != null) {
@@ -57,6 +57,7 @@ class ChatRecords {
             bill.setAmount(draft.amount());
             bill.setCategory(draft.category());
             bill.setOccurredAt(draft.occurredAt());
+            bill.setTimePrecision("EXACT".equals(input.timePrecision()) ? "EXACT" : "DATE");
             bill.setMerchant(draft.merchant());
             bill.setNote(draft.note());
             bill.setCreatedAt(LocalDateTime.now(ChatPlan.SHANGHAI).format(ChatPlan.TIME));

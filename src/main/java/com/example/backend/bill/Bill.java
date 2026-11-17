@@ -32,6 +32,10 @@ public class Bill {
     /** 消费时间 yyyy-MM-dd HH:mm:ss */
     @Column(name = "occurred_at", nullable = false, length = 19)
     private String occurredAt;
+    /** DATE 表示只知道日期，EXACT 表示有明确时刻；旧数据为 null。 */
+    private String timePrecision;
+    public String getTimePrecision() { return timePrecision; }
+    public void setTimePrecision(String value) { timePrecision = value; }
 
     /** 备注 */
     @Column(length = 255)
