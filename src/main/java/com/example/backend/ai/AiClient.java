@@ -233,6 +233,29 @@ public class AiClient {
         }
     }
 
+    ChatPlan planChat(ChatPlan.Request input) {
+        LocalDate today = LocalDate.now(ChatPlan.SHANGHAI);
+        String prompt = """
+                你是个人账本的意图解析器。上海日期：今天 %s，昨天 %s，前天 %s。
+                输入 JSON 中 text 是用户本轮输入，history 是对话背景，pending 是仍待补充的操作。
+                输出 JSON {kind,message,draft,query,pending}。只根据实际消费或明确记账请求返回 RECORD。
+                假设、例子、询问、要求复述旧账单绝不记账；查账用 QUERY，无关用 UNSUPPORTED。
+                一次只能记一笔。多笔用 UNSUPPORTED 并要求拆开。不要把历史中已完成的消费当成新账单。
+                draft 字段：amount（元、数字）、category、merchant、occurredAt、note、confidence。
+                分类只能选餐饮、交通、购物、娱乐、居住、医疗、教育、其他；无法判断留 null。
+                occurredAt 格式 yyyy-MM-dd HH:mm:ss。只给日期使用 00:00:00。没提日期且待办没有日期时必须追问。
+                补充或纠正时保留待办中已知字段。缺少金额、分类或日期返回 CLARIFY 和已有草稿。
+                pending 字段 source（TEXT 或 RECEIPT）、draft、query。若是小票，只补充草稿，返回 CLARIFY。
+                query 字段 action（stat 或 list）、start、end、category、aggregate（sum、count、avg、max）、keyword。
+                start 和 end 都为含首尾的 yyyy-MM-dd。没说查询日期时可用本月至今，除非日期有歧义。
+                同时记账和查账用 RECORD_THEN_QUERY，含完整草稿和查询。查账日期不能当作消费日期。
+                缺信息用 CLARIFY，保留已知草稿和查询条件。补齐待办后仍要完成待办包含的全部操作。
+                message 简短说明或追问，不声称账单已保存，也不要给出统计数字。
+                """.formatted(today, today.minusDays(1), today.minusDays(2));
+        String raw = request(prompt, JSON_MAPPER.writeValueAsString(input), true);
+        return JSON_MAPPER.readValue(raw, ChatPlan.class);
+    }
+
     /** 纯文本请求的便捷方法 */
     private String request(String systemPrompt, String userPrompt, boolean jsonMode) {
         List<Map<String, Object>> messages = systemPrompt == null
