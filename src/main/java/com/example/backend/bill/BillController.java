@@ -52,45 +52,65 @@ public class BillController {
         return ApiResponse.ok(repository.save(bill));
     }
 
-    /** 查询账单列表，支持按月份、分类、关键词筛选 */
-    @PutMapping("/{id}/amount")
-    public ApiResponse<Bill> updateAmount(@PathVariable Long id, @RequestBody java.util.Map<String, java.math.BigDecimal> body) {
-        java.math.BigDecimal amount = body.get("amount");
-        if (amount == null || amount.signum() <= 0 || amount.stripTrailingZeros().scale() > 2
-                || amount.compareTo(new java.math.BigDecimal("9999999999.99")) > 0) {
-            return ApiResponse.fail(40001, "请输入有效金额，最多两位小数");
-        }
-        return repository.findById(id).map(bill -> {
-            bill.setAmount(amount);
-            return ApiResponse.ok(repository.save(bill));
-        }).orElseGet(() -> ApiResponse.fail(40401, "原账单不存在，无法更正"));
-    }
-
+    /** 查询账单列表，支持按月份、分类、关键词筛选，以及安全分页 */
     @GetMapping
     public ApiResponse<List<Bill>> list(
             @RequestParam(required = false) String month,
             @RequestParam(required = false) String category,
-            @RequestParam(required = false) String keyword) {
+            @RequestParam(required = false) String keyword,
+            // 【新增】接收前端传来的分页参数，默认第1页，每页10条
+            @RequestParam(defaultValue = "1") Integer page,
+            @RequestParam(defaultValue = "10") Integer size) {
+
+        // 强制限制 page 和 size
+
+        // 1. 页码不能小于1（防止传 -1 或 0）
+        if (page == null || page < 1) {
+            page = 1;
+        }
+        // 2. 每页条数限制在 1 到 50 之间（防止恶意传 size=999999 把内存撑爆）
+        if (size == null || size < 1) {
+            size = 10;
+        }
+        if (size > 50) {
+            size = 50;
+        }
 
         String start = null;
         String end = null;
 
-        // 按 month (yyyy-MM) 拼出 start 和 end
+        // 处理 month 参数
         if (month != null && !month.isEmpty()) {
             start = month + "-01 00:00:00";
             try {
                 java.time.YearMonth ym = java.time.YearMonth.parse(month);
                 end = month + "-" + ym.lengthOfMonth() + " 23:59:59";
             } catch (Exception e) {
-                // 如果前端传的 month 格式不对，忽略月份筛选
                 start = null; end = null;
             }
         }
 
-        //按 category 和 keyword 筛选，调用Repository 组合查询
-        List<Bill> bills = repository.findBillsWithConditions(start, end, category, keyword);
+        // 调用 Repository 查出符合条件的所有数据
+        List<Bill> allBills = repository.findBillsWithConditions(start, end, category, keyword);
 
-        return ApiResponse.ok(bills);
+
+        // 在内存中进行安全的分页截取
+
+        int total = allBills.size();
+        int fromIndex = (page - 1) * size;
+
+        // 如果算出来的起始位置已经超过了总条数，说明前端查的页码太大了，直接返回空列表
+        if (fromIndex >= total) {
+            return ApiResponse.ok(new java.util.ArrayList<>());
+        }
+
+        // 计算结束位置，使用 Math.min 防止 toIndex 越界
+        int toIndex = Math.min(fromIndex + size, total);
+
+        // 截取当前页的数据
+        List<Bill> pagedBills = allBills.subList(fromIndex, toIndex);
+
+        return ApiResponse.ok(pagedBills);
     }
 
     /** 删除账单 */
