@@ -57,6 +57,19 @@ public class AiController {
         }
     }
 
+    @PostMapping("/chat/delete-filter")
+    public ResponseEntity<ApiResponse<AiClient.DeleteBillFilter>> deleteFilter(@RequestBody Map<String, String> body) {
+        String text = body.get("text");
+        if (text == null || text.isBlank() || text.length() > 4000) {
+            return ResponseEntity.badRequest().body(ApiResponse.fail(40001, "请输入 1 至 4000 字的消息"));
+        }
+        try {
+            return ResponseEntity.ok(ApiResponse.ok(aiClient.planBillDeletion(text)));
+        } catch (RuntimeException e) {
+            return ResponseEntity.status(502).body(ApiResponse.fail(50002, "AI 暂时无法识别删除条件"));
+        }
+    }
+
     @PostMapping("/chat/records")
     public ResponseEntity<ApiResponse<ChatRecords.Receipt>> record(@RequestBody ChatRecords.Request request) {
         try {

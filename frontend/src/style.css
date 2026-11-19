@@ -99,3 +99,10 @@
 }
 
 .manual-fields{border:0;padding:0;margin:0;min-width:0}.entry-actions{display:flex;gap:9px;align-items:center;flex-shrink:0}.entry-actions .secondary{padding:11px 14px;font-size:12px}@media(max-width:600px){.title-row{flex-wrap:wrap}.entry-actions{width:100%;justify-content:flex-end}.entry-actions .primary,.entry-actions .secondary{padding:9px 12px;font-size:11px}}
+
+.delete-preview { max-width: 100%; min-width: 0; }
+.delete-preview legend { font-weight: 700; padding-inline: 5px; }
+.delete-candidates { max-height: 13rem; overflow: auto; }
+.delete-candidates label { display: block; padding: 6px 2px; overflow-wrap: anywhere; }
+.delete-candidates input { margin-right: 6px; }
+.delete-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }

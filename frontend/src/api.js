@@ -25,6 +25,10 @@ export const api = {
   bills: query => request('/bill', { query }),
   add: body => request('/bill', { method: 'POST', body }),
   remove: id => request(`/bill/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  deleteFilter: text => request('/ai/chat/delete-filter', { method: 'POST', body: { text } }),
+  removeConfirmed: ({ id, amount, occurredAt, category, merchant, note, createdAt, timePrecision }) =>
+    request(`/bill/${encodeURIComponent(id)}/confirmed`, { method: 'DELETE',
+      body: { amount, occurredAt, category, merchant, note, createdAt, timePrecision } }),
   category: month => request('/stat/category', { query: { month } }),
   trend: (from, to) => request('/stat/trend', { query: { from, to } }),
   range: query => request('/stat/range', { query }),

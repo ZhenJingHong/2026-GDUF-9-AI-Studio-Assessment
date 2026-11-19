@@ -256,6 +256,25 @@ public class AiClient {
         return JSON_MAPPER.readValue(raw, ChatPlan.class);
     }
 
+    DeleteBillFilter planBillDeletion(String text) {
+        LocalDate today = LocalDate.now(ChatPlan.SHANGHAI);
+        String prompt = """
+                只提取用户明确要求删除单笔账单的筛选条件，不执行删除。
+                上海日期：今天 %s，昨天 %s，前天 %s。
+                返回 JSON {deleteRequested,amount,start,end,time,category,merchant,useReference}。
+                询问删除方法、假设、否定、取消删除、修改金额或明确要求批量删除时，deleteRequested 为 false。
+                amount 是原单笔金额（数字，元）。start/end 为含首尾的 yyyy-MM-dd，同一天填相同日期。
+                time 为明确的消费时刻 HH:mm；泛指早上、晚上时留 null，日期已知则仍填写日期。
+                category 仅可为餐饮、交通、购物、娱乐、居住、医疗、教育、其他。
+                merchant 为用户明确提到的店名。“刚才那笔”“这笔”等引用上文时 useReference 为 true。
+                没有提供的筛选条件留 null。禁止补默认日期、猜测金额、把合计理解为单笔，也不要推断账单编号。
+                """.formatted(today, today.minusDays(1), today.minusDays(2));
+        return JSON_MAPPER.readValue(request(prompt, text, true), DeleteBillFilter.class);
+    }
+
+    record DeleteBillFilter(boolean deleteRequested, java.math.BigDecimal amount, String start,
+                            String end, String time, String category, String merchant, boolean useReference) {}
+
     /** 纯文本请求的便捷方法 */
     private String request(String systemPrompt, String userPrompt, boolean jsonMode) {
         List<Map<String, Object>> messages = systemPrompt == null

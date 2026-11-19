@@ -4,6 +4,7 @@ import { Send, Upload, Trash2, Plus } from 'lucide-vue-next'
 import { api } from '../api'
 import { demoPlan } from '../chatDemo'
 import { resolveBillChange } from '../billChange'
+import { billSnapshotMatches, isDeleteRequest, matchBillsForDeletion } from '../billDeletion'
 import { displayBillTime, normalizeTime, shanghaiTime } from '../billTime'
 
 const props = defineProps({
@@ -18,6 +19,8 @@ const selected = ref(stored?.selected || {})
 const storageError = ref('')
 const jobs = reactive(new Set())
 const historyOpen = ref(false)
+const deletions = reactive(new Map())
+const deletion = computed(() => deletions.get(current.value?.id))
 const input = ref(null)
 const transcript = ref(null)
 const current = computed(() => conversations.value.find(item => item.id === selected.value[props.mode]))
@@ -44,6 +47,7 @@ function select(id) {
 }
 
 function deleteChat(session) {
+  deletions.delete(session.id)
   conversations.value = conversations.value.filter(item => item.id !== session.id)
   if (current.value) return
   if (visibleHistory.value.length) select(visibleHistory.value[0].id)
@@ -93,11 +97,22 @@ function complete(draft) {
   return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === time.slice(0, 10)
 }
 
+async function allBills(query = {}) {
+  const size = 50
+  const bills = new Map()
+  for (let page = 1; ; page++) {
+    const batch = await api.bills({ ...query, page, size })
+    const count = bills.size
+    for (const bill of batch) bills.set(bill.id, bill)
+    if (batch.length < size || bills.size === count) return [...bills.values()]
+  }
+}
+
 async function queryLedger(session, spec) {
   const demo = session.mode === 'demo'
   const { start, end, category, keyword, aggregate = 'sum' } = spec
   const label = `${demo ? '演示账本 · ' : ''}${start} 至 ${end} · ${category || '全部分类'}`
-  const rows = demo ? props.demoBills() : await api.bills({ category, keyword })
+  const rows = demo ? props.demoBills() : await allBills({ category, keyword })
   const selected = rows.filter(bill => {
     const date = bill.occurredAt?.slice(0, 10)
     return date >= start && date <= end && (!category || bill.category === category)
@@ -117,23 +132,65 @@ async function queryLedger(session, spec) {
 }
 
 async function changeBill(session, text) {
-  const rows = session.mode === 'demo' ? props.demoBills() : await api.bills({})
+  const rows = session.mode === 'demo' ? props.demoBills() : await allBills()
   const change = resolveBillChange(rows, session, text)
-  if (change.error) { addMessage(session, 'assistant', change.error); return }
-  const { bill, amount, deleting } = change
+  if (change.error || change.deleting) {
+    addMessage(session, 'assistant', change.error || '请单独发送删除请求，找到账单后再确认删除。')
+    return
+  }
+  const { bill, amount } = change
   const oldAmount = bill.amount
   if (session.mode === 'demo') {
-    if (deleting) localStorage.setItem('pocket-bills', JSON.stringify(rows.filter(b => b.id !== bill.id)))
-    else { rows.find(b => b.id === bill.id).amount = amount; localStorage.setItem('pocket-bills', JSON.stringify(rows)) }
-  } else if (deleting) await api.remove(bill.id)
-  else await api.updateAmount(bill.id, amount)
-  session.billReference = deleting ? [] : [String(bill.id)]
-  session.correction = null
-  addMessage(session, 'assistant', deleting
-    ? `已删除账单 #${bill.id}：${displayBillTime(bill)} · ¥${props.money(bill.amount)}。`
-    : `已更正原账单 #${bill.id}：¥${props.money(oldAmount)} → ¥${props.money(amount)}，没有新增账单。`)
+    bill.amount = amount
+    localStorage.setItem('pocket-bills', JSON.stringify(rows))
+  } else await api.updateAmount(bill.id, amount)
+  session.billReference = [String(bill.id)]
+  addMessage(session, 'assistant', `已更正原账单 #${bill.id}：¥${props.money(oldAmount)} → ¥${props.money(amount)}，没有新增账单。`)
   emit('recorded', session.mode)
 }
+
+async function prepareDeletion(session, text) {
+  const demo = session.mode === 'demo'
+  const rows = demo ? props.demoBills() : await allBills()
+  const plan = demo
+    ? { deleteRequested: true, merchant: rows.find(b => b.merchant && text.includes(b.merchant))?.merchant }
+    : await api.deleteFilter(text)
+  const { message, matches } = matchBillsForDeletion(rows, session.billReference || [], text, plan, props.categories)
+  if (message) {
+    addMessage(session, 'assistant', message)
+    return
+  }
+  deletions.set(session.id, { matches, selectedId: matches.length === 1 ? matches[0].id : null })
+}
+
+function cancelDeletion() {
+  const session = current.value
+  if (jobs.has(session.id)) return
+  deletions.delete(session.id)
+  addMessage(session, 'assistant', '已取消删除。')
+}
+
+function confirmDeletion() {
+  const session = current.value
+  const pending = deletions.get(session.id)
+  const bill = pending?.matches.find(candidate => candidate.id === pending.selectedId)
+  if (!bill) return
+  run(session, async () => {
+    if (session.mode === 'demo') {
+      const rows = props.demoBills()
+      if (!billSnapshotMatches(bill, rows.find(row => row.id === bill.id))) {
+        deletions.delete(session.id)
+        throw new Error('账单已变化或不存在，请重新查找再确认')
+      }
+      localStorage.setItem('pocket-bills', JSON.stringify(rows.filter(row => row.id !== bill.id)))
+    } else await api.removeConfirmed(bill)
+    deletions.delete(session.id)
+    session.billReference = (session.billReference || []).filter(id => id !== String(bill.id))
+    addMessage(session, 'assistant', `已删除账单 #${bill.id}：${displayBillTime(bill)} · ¥${props.money(bill.amount)}。`)
+    emit('recorded', session.mode)
+  })
+}
+
 async function runAction(session) {
   if (session.action?.stage === 'parse') {
     const { request, month } = session.action
@@ -186,8 +243,16 @@ async function run(session, task) {
 function submit() {
   const session = current.value
   const text = session.input.trim()
-  if (!text || session.action || jobs.has(session.id)) return
-  if(/改|更正|记错|不是|删除|删掉|删了|取消.{0,4}(?:那笔|这笔|刚才)/.test(text) && !session.pending) {
+  if (!text || session.action || deletion.value || jobs.has(session.id)) return
+  if (isDeleteRequest(text)) {
+    session.input = ''
+    addMessage(session, 'user', text)
+    if (/改成|改为|改到|更正为/.test(text)) {
+      addMessage(session, 'assistant', '这句话同时提到了删除和改金额。请单独说明你要删除，还是修改金额。')
+    } else run(session, () => prepareDeletion(session, text))
+    return
+  }
+  if (/改|更正|记错|不是/.test(text) && !session.pending) {
     session.input=''; addMessage(session,'user',text)
     run(session,()=>changeBill(session,text)); return
   }
@@ -264,9 +329,27 @@ async function upload(event) {
             {{ [current.pending.draft.merchant, current.pending.draft.note].filter(Boolean).join(' · ') }}
           </p>
           <button v-if="current.pending.source === 'RECEIPT' && complete(current.pending.draft)" class="primary"
-            type="button" :disabled="jobs.has(current.id) || !!current.action" @click="confirmReceipt">确认入账</button>
+            type="button" :disabled="jobs.has(current.id) || !!current.action || !!deletion" @click="confirmReceipt">确认入账</button>
         </div>
       </div>
+      <fieldset v-if="deletion" class="chat-draft delete-preview" :disabled="jobs.has(current.id)">
+        <legend>{{ deletion.matches.length === 1 ? '确认要删除的账单' : '找到 ' + deletion.matches.length + ' 笔账单，请选择一笔' }}</legend>
+        <div class="delete-candidates">
+        <div v-for="bill in deletion.matches" :key="bill.id">
+          <label>
+            <input v-if="deletion.matches.length > 1" v-model="deletion.selectedId" type="radio"
+              :name="'delete-bill-' + current.id" :value="bill.id">
+            #{{ bill.id }} · {{ displayBillTime(bill) }} · {{ bill.category }} · ¥{{ money(bill.amount) }}
+            <span v-if="bill.merchant"> · {{ bill.merchant }}</span>
+            <span v-if="bill.note"> · {{ bill.note }}</span>
+          </label>
+        </div>
+        </div>
+        <div class="delete-actions">
+          <button class="secondary" type="button" @click="cancelDeletion">取消</button>
+          <button class="primary" type="button" :disabled="deletion.selectedId == null" @click="confirmDeletion">确认删除</button>
+        </div>
+      </fieldset>
       <p v-if="current.error || storageError" class="budget-error" role="alert">{{ current.error || storageError }}</p>
       <p v-if="jobs.has(current.id)" role="status">正在处理…</p>
       <button v-else-if="current.action" class="secondary" type="button" @click="retry">
@@ -275,14 +358,14 @@ async function upload(event) {
       <form @submit.prevent="submit">
         <div class="ai-input">
           <input ref="input" v-model="current.input" maxlength="4000" placeholder="说说你想记的消费，或问问账本"
-            aria-label="AI 输入" :disabled="jobs.has(current.id) || !!current.action">
-          <button class="send" :disabled="!current.input.trim() || jobs.has(current.id) || !!current.action"
+            aria-label="AI 输入" :disabled="jobs.has(current.id) || !!current.action || !!deletion">
+          <button class="send" :disabled="!current.input.trim() || jobs.has(current.id) || !!current.action || !!deletion"
             aria-label="发送"><Send :size="19"/></button>
         </div>
         <div class="chat-actions">
           <label class="upload"><Upload :size="15"/>识别小票
             <input type="file" accept="image/jpeg,image/png,image/webp"
-              :disabled="jobs.has(current.id) || !!current.action || !!current.pending" @change="upload">
+              :disabled="jobs.has(current.id) || !!current.action || !!current.pending || !!deletion" @change="upload">
           </label>
           <button v-if="current.pending && !current.action" class="text-button" type="button"
             :disabled="jobs.has(current.id)" @click="current.pending = null">取消待办</button>

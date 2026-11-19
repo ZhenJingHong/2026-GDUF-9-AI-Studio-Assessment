@@ -3,9 +3,14 @@ package com.example.backend.bill;
 import com.example.backend.common.ApiResponse;
 import org.springframework.web.bind.annotation.*;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * 账单接口，前缀 /api/bill。
@@ -50,6 +55,20 @@ public class BillController {
 
         // 4. 保存入库并返回
         return ApiResponse.ok(repository.save(bill));
+    }
+
+    @Transactional
+    @PutMapping("/{id}/amount")
+    public ApiResponse<Bill> updateAmount(@PathVariable Long id, @RequestBody Map<String, BigDecimal> body) {
+        BigDecimal amount = body.get("amount");
+        if (amount == null || amount.signum() <= 0 || amount.stripTrailingZeros().scale() > 2
+                || amount.compareTo(new BigDecimal("9999999999.99")) > 0) {
+            return ApiResponse.fail(40001, "请输入有效金额，最多两位小数");
+        }
+        return repository.findForUpdate(id).map(bill -> {
+            bill.setAmount(amount);
+            return ApiResponse.ok(repository.save(bill));
+        }).orElseGet(() -> ApiResponse.fail(40401, "原账单不存在，无法更正"));
     }
 
     /** 查询账单列表，支持按月份、分类、关键词筛选，以及安全分页 */
@@ -97,20 +116,45 @@ public class BillController {
         // 在内存中进行安全的分页截取
 
         int total = allBills.size();
-        int fromIndex = (page - 1) * size;
+        long offset = (page - 1L) * size;
 
         // 如果算出来的起始位置已经超过了总条数，说明前端查的页码太大了，直接返回空列表
-        if (fromIndex >= total) {
+        if (offset >= total) {
             return ApiResponse.ok(new java.util.ArrayList<>());
         }
 
         // 计算结束位置，使用 Math.min 防止 toIndex 越界
-        int toIndex = Math.min(fromIndex + size, total);
+        int fromIndex = (int) offset;
+        int toIndex = (int) Math.min(offset + size, total);
 
         // 截取当前页的数据
         List<Bill> pagedBills = allBills.subList(fromIndex, toIndex);
 
         return ApiResponse.ok(pagedBills);
+    }
+
+    record DeleteSnapshot(BigDecimal amount, String occurredAt, String category, String merchant,
+                          String note, String createdAt, String timePrecision) {
+        boolean matches(Bill bill) {
+            return amount != null && bill.getAmount() != null && bill.getAmount().compareTo(amount) == 0
+                    && Objects.equals(occurredAt, bill.getOccurredAt())
+                    && Objects.equals(category, bill.getCategory())
+                    && Objects.equals(merchant, bill.getMerchant())
+                    && Objects.equals(note, bill.getNote())
+                    && Objects.equals(createdAt, bill.getCreatedAt())
+                    && Objects.equals(timePrecision, bill.getTimePrecision());
+        }
+    }
+
+    @Transactional
+    @DeleteMapping("/{id}/confirmed")
+    public ApiResponse<Void> deleteConfirmed(@PathVariable Long id, @RequestBody DeleteSnapshot snapshot) {
+        Bill bill = repository.findForUpdate(id).orElse(null);
+        if (bill == null || !snapshot.matches(bill)) {
+            return ApiResponse.fail(40901, "账单已变化或不存在，请重新查找再确认");
+        }
+        repository.delete(bill);
+        return ApiResponse.ok(null);
     }
 
     /** 删除账单 */
