@@ -19,15 +19,25 @@ export async function request(path, { method = 'GET', body, query } = {}) {
   } finally { clearTimeout(timer) }
 }
 export const api = {
+  updateAmount: (id, amount) => request(`/bill/${encodeURIComponent(id)}/amount`, { method: 'PUT', body: { amount } }),
   budget: month => request('/budget', { query: { month } }),
   saveBudget: body => request('/budget', { method: 'POST', body }),
   bills: query => request('/bill', { query }),
   add: body => request('/bill', { method: 'POST', body }),
   remove: id => request(`/bill/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  deleteFilter: text => request('/ai/chat/delete-filter', { method: 'POST', body: { text } }),
+  removeConfirmed: ({ id, amount, occurredAt, category, merchant, note, createdAt, timePrecision }) =>
+    request(`/bill/${encodeURIComponent(id)}/confirmed`, { method: 'DELETE',
+      body: { amount, occurredAt, category, merchant, note, createdAt, timePrecision } }),
   category: month => request('/stat/category', { query: { month } }),
   trend: (from, to) => request('/stat/trend', { query: { from, to } }),
   range: query => request('/stat/range', { query }),
-  parse: text => request('/ai/parse-bill', { method: 'POST', body: { text } }),
-  query: text => request('/ai/query', { method: 'POST', body: { text } }),
+  chat: body => request('/ai/chat', { method: 'POST', body }),
+  chatRecord: body => request('/ai/chat/records', { method: 'POST', body }),
+  budgetDefaults: () => request('/budget/defaults'),
+  setBudgetDefaults: budgets => request('/budget/defaults', { method: 'PUT', body: { budgets } }),
+  budgetMonth: month => request('/budget/month', { query: { month } }),
+  setBudgetMonth: (month, budgets) => request('/budget/month', { method: 'PUT', query: { month }, body: { budgets } }),
+  restoreBudgetMonth: month => request('/budget/month', { method: 'DELETE', query: { month } }),
   ocr: file => { const body = new FormData(); body.append('file', file); return request('/ai/ocr-receipt', { method: 'POST', body }) },
 }

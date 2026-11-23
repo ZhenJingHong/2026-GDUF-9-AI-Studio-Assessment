@@ -11,6 +11,10 @@ import java.util.List;
  */
 public interface BillRepository extends JpaRepository<Bill, Long> {
 
+    @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT b FROM Bill b WHERE b.id = :id")
+    java.util.Optional<Bill> findForUpdate(@Param("id") Long id);
+
     /** 按分类查询，时间倒序 */
     List<Bill> findByCategoryOrderByOccurredAtDesc(String category);
 
@@ -23,7 +27,7 @@ public interface BillRepository extends JpaRepository<Bill, Long> {
             "(:end IS NULL OR b.occurredAt <= :end) AND " +
             "(:category IS NULL OR b.category = :category) AND " +
             "(:keyword IS NULL OR b.merchant LIKE %:keyword% OR b.note LIKE %:keyword%) " +
-            "ORDER BY b.occurredAt DESC")
+            "ORDER BY b.occurredAt DESC, b.id DESC")
     List<Bill> findBillsWithConditions(
             @Param("start") String start,
             @Param("end") String end,
