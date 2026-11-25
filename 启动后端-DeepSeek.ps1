@@ -1,4 +1,4 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
 Set-Location -LiteralPath $PSScriptRoot
 $secureKey = Read-Host '请输入自己的 DeepSeek API Key（输入内容隐藏，仅用于本次后端进程）' -AsSecureString
 $keyPointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secureKey)

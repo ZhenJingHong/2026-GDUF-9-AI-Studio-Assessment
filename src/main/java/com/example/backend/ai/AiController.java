@@ -10,6 +10,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.util.Map;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -46,6 +47,13 @@ public class AiController {
         if (request.text() == null || request.text().isBlank() || request.text().length() > 4000) {
             return ResponseEntity.badRequest().body(ApiResponse.fail(40001, "请输入 1 至 4000 字的消息"));
         }
+        // 第一层防线：越界请求不进入模型，直接返回固定拒答话术（不做模型调用，也无法被话术绕过）
+        ChatPlan.Pending pending = ChatPlan.cleanPending(request.pending());
+        Optional<Guardrail.Verdict> verdict = Guardrail.screen(request.text());
+        if (verdict.isPresent()) {
+            return ResponseEntity.ok(ApiResponse.ok(
+                    new ChatPlan(ChatPlan.Kind.REFUSE, verdict.get().reply(), null, null, pending)));
+        }
         List<ChatPlan.Turn> history = request.history() == null ? List.of() : request.history();
         int start = Math.max(0, history.size() - 18);
         int userTurns = 0;
@@ -61,7 +69,6 @@ public class AiController {
                         && turn.content() != null)
                 .map(turn -> new ChatPlan.Turn(turn.role(), turn.content().substring(0, Math.min(4000, turn.content().length()))))
                 .toList();
-        ChatPlan.Pending pending = ChatPlan.cleanPending(request.pending());
         try {
             return ResponseEntity.ok(ApiResponse.ok(ChatPlan.validate(
                     aiClient.planChat(new ChatPlan.Request(request.text(), history, pending)), pending)));
@@ -121,6 +128,10 @@ public class AiController {
         if (text.isEmpty()) {
             return ApiResponse.fail(40001, "text 不能为空");
         }
+        Optional<Guardrail.Verdict> verdict = Guardrail.screen(text);
+        if (verdict.isPresent()) {
+            return ApiResponse.fail(40003, verdict.get().reply());
+        }
         try {
             return ApiResponse.ok(aiClient.parseBill(text));
         } catch (Exception e) {
@@ -154,10 +165,33 @@ public class AiController {
         if (text.isEmpty()) {
             return ApiResponse.fail(40001, "text 不能为空");
         }
+        Optional<Guardrail.Verdict> verdict = Guardrail.screen(text);
+        if (verdict.isPresent()) {
+            return ApiResponse.fail(40003, verdict.get().reply());
+        }
         try {
             return ApiResponse.ok(aiClient.parseQuery(text));
         } catch (Exception e) {
             return ApiResponse.fail(50002, "解析失败：" + e.getMessage());
         }
+    }
+
+    /**
+     * 边界自检：不调用模型，直接判断一句话是否触发拒答、命中哪类边界。
+     * 用于联调、答辩演示和回归测试。
+     */
+    @PostMapping("/boundary-check")
+    public ApiResponse<Map<String, Object>> boundaryCheck(@RequestBody Map<String, String> body) {
+        String text = body.getOrDefault("text", "");
+        if (text.isBlank()) {
+            return ApiResponse.fail(40001, "text 不能为空");
+        }
+        return ApiResponse.ok(Guardrail.screen(text)
+                .<Map<String, Object>>map(verdict -> Map.of(
+                        "blocked", true,
+                        "boundary", verdict.boundary().label,
+                        "rule", verdict.rule(),
+                        "reply", verdict.reply()))
+                .orElseGet(() -> Map.of("blocked", false, "boundary", "", "rule", "", "reply", "")));
     }
 }

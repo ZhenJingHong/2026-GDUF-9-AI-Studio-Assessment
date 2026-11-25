@@ -1,4 +1,9 @@
+import { screenBoundary } from './boundary'
+
 export function demoPlan({ text, pending }, categories, month) {
+  // 演示模式不请求后端，越界请求在本地按同一套规则拒答
+  const refused = screenBoundary(text)
+  if (refused) return { kind: 'REFUSE', pending, message: refused.reply }
   const today = new Date()
   const local = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Shanghai' })
   function findDate(input) {

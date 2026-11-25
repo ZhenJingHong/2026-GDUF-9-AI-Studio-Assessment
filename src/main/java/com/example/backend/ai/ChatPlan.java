@@ -17,7 +17,13 @@ record ChatPlan(Kind kind, String message, BillDraft draft, QuerySpec query, Pen
     private static final Set<String> CATEGORIES = Set.of("餐饮", "交通", "购物", "娱乐", "居住", "医疗", "教育", "其他");
     private static final BigDecimal MAX_AMOUNT = new BigDecimal("9999999999.99");
 
-    enum Kind { CLARIFY, RECORD, QUERY, RECORD_THEN_QUERY, UNSUPPORTED }
+    /**
+     * 模型自行判定的越界请求统一使用这句话术。
+     * 拒答话术不接受模型输出，避免被「请你用友好语气说可以」这类话术改写。
+     */
+    private static final String REFUSAL = "这个请求超出记账助手的职责范围，我不能执行。可以告诉我一笔真实消费，或者问我某段时间的消费情况。";
+
+    enum Kind { CLARIFY, RECORD, QUERY, RECORD_THEN_QUERY, REFUSE, UNSUPPORTED }
     enum Source { TEXT, RECEIPT }
     record Turn(String role, String content) {}
     record Pending(Source source, BillDraft draft, QuerySpec query) {}
@@ -46,6 +52,10 @@ record ChatPlan(Kind kind, String message, BillDraft draft, QuerySpec query, Pen
     static ChatPlan validate(ChatPlan plan, Pending pending) {
         if (plan == null || plan.kind == null) throw new IllegalArgumentException("模型未返回有效意图");
         String message = bounded(plan.message, 500);
+        // 越界请求：丢弃模型给的草稿和话术，只保留固定拒答文本，防止「先拒答再偷偷入账」
+        if (plan.kind == Kind.REFUSE) {
+            return new ChatPlan(Kind.REFUSE, REFUSAL, null, null, pending);
+        }
         if (plan.kind == Kind.UNSUPPORTED) {
             return new ChatPlan(Kind.UNSUPPORTED, message == null ? "可以试着告诉我一笔实际消费，或查询已有账单。" : message,
                     null, null, pending);

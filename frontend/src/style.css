@@ -60,6 +60,18 @@
   line-height: 1.65;
 }
 .chat-user { align-self: flex-end; background: #214e3c; color: white; }
+.chat-boundary { background: #fdf3ea; border: 1px solid #f0dcc9; }
+.boundary-tag {
+  display: block;
+  width: fit-content;
+  font-size: 9px;
+  letter-spacing: .6px;
+  color: #9a6a3f;
+  background: #f7e4cf;
+  border-radius: 4px;
+  padding: 2px 7px;
+  margin-bottom: 7px;
+}
 .chat-draft { border: 1px solid #d7e4d6; }
 .chat-draft p { margin: 5px 0; }
 .chat-draft button { margin-top: 7px; }

@@ -2,6 +2,7 @@
 import { computed, nextTick, reactive, ref, watch } from 'vue'
 import { Send, Upload, Trash2, Plus } from 'lucide-vue-next'
 import { api } from '../api'
+import { screenBoundary } from '../boundary'
 import { demoPlan } from '../chatDemo'
 import { resolveBillChange } from '../billChange'
 import { billSnapshotMatches, isDeleteRequest, matchBillsForDeletion } from '../billDeletion'
@@ -72,8 +73,8 @@ async function focus() {
 }
 defineExpose({ focus })
 
-function addMessage(session, role, content) {
-  session.messages.push({ role, content })
+function addMessage(session, role, content, kind) {
+  session.messages.push(kind ? { role, content, kind } : { role, content })
 }
 
 function saveAction(session, draft, query) {
@@ -205,7 +206,7 @@ async function runAction(session) {
     } else if (plan.kind === 'QUERY') {
       session.action = { stage: 'query', query: plan.query }
     } else {
-      addMessage(session, 'assistant', plan.message || '请补充消费信息。')
+      addMessage(session, 'assistant', plan.message || '请补充消费信息。', plan.kind === 'REFUSE' ? 'REFUSE' : null)
     }
   }
   if (session.action?.stage === 'save') {
@@ -244,6 +245,15 @@ function submit() {
   const session = current.value
   const text = session.input.trim()
   if (!text || session.action || deletion.value || jobs.has(session.id)) return
+  // 边界拒答优先于「删除」「改金额」等快捷通道：否则「删除所有账单」会走进单笔删除流程
+  const refused = screenBoundary(text)
+  if (refused) {
+    session.input = ''
+    addMessage(session, 'user', text)
+    addMessage(session, 'assistant', refused.reply, 'REFUSE')
+    persist()
+    return
+  }
   if (isDeleteRequest(text)) {
     session.input = ''
     addMessage(session, 'user', text)
@@ -320,7 +330,8 @@ async function upload(event) {
           {{ mode === 'demo' ? '本地演示 · ' : '' }}试试「昨天午饭花了 25 元」或「这个月花了多少」。
         </p>
         <div v-for="(message, index) in current.messages" :key="index" class="chat-message"
-          :class="'chat-' + message.role">{{ message.content.replace(/(\d{4}-\d{2}-\d{2}) 00:00:00/g,'$1（时间未指定）') }}</div>
+          :class="['chat-' + message.role, { 'chat-boundary': message.kind === 'REFUSE' }]"><span
+            v-if="message.kind === 'REFUSE'" class="boundary-tag">边界提示 · 未执行</span>{{ message.content.replace(/(\d{4}-\d{2}-\d{2}) 00:00:00/g,'$1（时间未指定）') }}</div>
         <div v-if="current.pending?.draft" class="chat-draft">
           <strong>{{ current.pending.source === 'RECEIPT' ? '小票账单' : '待补充账单' }}</strong>
           <p>{{ current.pending.draft.amount == null ? '金额待补' : '¥' + money(current.pending.draft.amount) }}
