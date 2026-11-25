@@ -27,6 +27,19 @@ public class AiController {
         this.aiClient = aiClient;
         this.records = records;
     }
+    @PostMapping("/advice")
+    public ApiResponse<String> advice(@RequestBody Map<String, Object> body) {
+        Object raw = body.get("stats");
+        if (raw == null || String.valueOf(raw).isBlank() || "null".equals(String.valueOf(raw))) {
+            return ApiResponse.fail(40001, "缺少统计数据");
+        }
+        String data = raw instanceof String s ? s : String.valueOf(raw);
+        try {
+            return ApiResponse.ok(aiClient.advice(data));
+        } catch (Exception e) {
+            return ApiResponse.fail(50002, "生成建议失败：" + e.getMessage());
+        }
+    }
 
     @PostMapping("/chat")
     public ResponseEntity<ApiResponse<ChatPlan>> planChat(@RequestBody ChatPlan.Request request) {

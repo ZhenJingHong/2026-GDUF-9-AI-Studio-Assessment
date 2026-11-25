@@ -313,4 +313,17 @@ public class AiClient {
         Map<String, Object> message = (Map<String, Object>) choices.get(0).get("message");
         return (String) message.get("content");
     }
+    public String advice(String spendingJson) {
+        String prompt = """
+            你是个人记账应用的理财助手。下面是用户某个月的消费统计 JSON：
+            %s
+
+            请给出 2 到 3 条简短的消费建议，要求：
+            1. 每条不超过 40 字
+            2. 基于数据说话，指出占比最高的分类、最大单笔、或明显异常
+            3. 语气友好，不要指责
+            4. 只输出建议正文，不要标题、不要 markdown
+            """.formatted(spendingJson);
+        return request(prompt, "请分析并给出建议", false);
+    }
 }
