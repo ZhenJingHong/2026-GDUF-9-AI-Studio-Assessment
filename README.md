@@ -16,7 +16,7 @@
 | 数据库 | H2（文件模式，数据持久化到 `./data`） |
 | 前端 | Vue 3 + Vite + ECharts + Lucide 图标 + pnpm |
 | AI | DeepSeek `deepseek-flash`（支持图片输入，OpenAI 兼容格式） |
-| 部署 | Docker 多阶段构建 / docker-compose |
+| 部署 | Docker 多阶段构建 / docker-compose ，Nginx 反向代理 |
 
 ## 目录结构
 
@@ -38,7 +38,10 @@
 │   ├── 接口文档.md
 │   ├── 设计说明.md
 │   ├── sample-bills.csv
-│   └── import-sample.ps1
+│   ├── import-sample.ps1
+│   ├── DeepSeek本机配置.md
+│   ├── 时间与账单更正说明.md
+│   └── try整合验证-20261117.md
 ├── Dockerfile                 # 三阶段构建：前端 → 后端 → 运行
 ├── docker-compose.yaml
 ├── pom.xml
@@ -154,15 +157,18 @@ spring.jpa.hibernate.ddl-auto=update
 | --- | --- | --- |
 | Spring Boot 骨架 | ✅ 已完成 | — |
 | 账单实体与 CRUD | ✅ 已完成 | 邱卓成 |
+| 账单更正与删除（对话指令） | ✅ 已完成 | 麦苗 |
 | AI 自然语言记账 | ✅ 已完成 | 钟嘉和 |
 | 小票 OCR 识别 | ✅ 已完成 | 钟嘉和 |
 | 自动分类与统计 | ✅ 已完成 | 陈宇亮 |
 | 自然语言查账 | ✅ 已完成 | 钟嘉和 |
+| 多轮追问与澄清（对话式记账） | ✅ 已完成 | 陈宇亮、麦苗 |
+| 预算与超支提醒 | ✅ 已完成 | 陈宇亮、陈跃龙 |
 | 前端页面 | ✅ 已完成 | 麦苗 |
 | Docker 部署 | ✅ 已完成 | 钟嘉和 |
-| 预算与超支提醒 | ✅ 已完成 | 陈宇亮、陈跃龙 |
+| Nginx 部署配置 | ✅ 已完成 | 麦苗 |
+| 全局异常处理与参数校验 | ✅ 已完成 | 邱卓成 |
 | 答辩 PPT 与录屏 | 🚧 进行中 | 陈跃龙 |
-| 多轮追问与澄清 | 🚧 进行中 | 陈宇亮 |
 | 对诱导性/越界请求的拒绝边界 | ⬜ 未开始 | 未认领 |
 
 ## 接口一览
@@ -181,6 +187,13 @@ spring.jpa.hibernate.ddl-auto=update
 | GET | `/api/stat/category` | 按类别统计 | ✅ |
 | GET | `/api/stat/trend` | 月度趋势 | ✅ |
 | GET | `/api/stat/range` | 按日期范围统计 | ✅ |
+| POST | `/api/ai/chat` | 对话式记账（多轮澄清） | ✅ |
+| POST | `/api/ai/chat/records` | 对话记账确认入账（幂等） | ✅ |
+| PUT | `/api/bill/{id}/amount` | 更正单笔账单金额 | ✅ |
+| GET | `/api/budget` | 查询月度预算与超支状态 | ✅ |
+| POST | `/api/budget` | 保存月度预算 | ✅ |
+| GET | `/api/budget/defaults` | 查询全局默认预算 | ✅ |
+| PUT | `/api/budget/defaults` | 保存全局默认预算 | ✅ |
 
 ## 团队分工
 
