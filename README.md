@@ -213,6 +213,16 @@ spring.jpa.hibernate.ddl-auto=update
 - 数据库为 H2 文件模式，适合单机演示；多实例部署需换成 MySQL 或 PostgreSQL
 - 暂未提供在线 Demo 地址
 
+### 关于 API Key
+
+本项目 AI 能力依赖 DeepSeek API，密钥不入仓库，需自行提供：
+
+- **本地运行**：设置环境变量 `AI_API_KEY`
+- **Docker 运行**：`docker run -e AI_API_KEY=sk-xxx ...`，或在根目录建 `.env` 文件写入 `AI_API_KEY=sk-xxx`（已 gitignore）
+- **不配 Key**：应用仍可启动，前端演示模式、账单增删查、统计图表均可用；AI 记账、OCR、自然语言查账会返回 401
+
+Key 申请地址：<https://platform.deepseek.com/api_keys>
+
 ## 提交规范
 
 - 每完成一个可运行的小功能提交一次，避免最后一次性上传
