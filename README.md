@@ -194,6 +194,7 @@ spring.jpa.hibernate.ddl-auto=update
 | POST | `/api/budget` | 保存月度预算 | ✅ |
 | GET | `/api/budget/defaults` | 查询全局默认预算 | ✅ |
 | PUT | `/api/budget/defaults` | 保存全局默认预算 | ✅ |
+| POST | `/api/ai/advice` | AI 消费建议 | ✅ |
 
 ## 团队分工
 
