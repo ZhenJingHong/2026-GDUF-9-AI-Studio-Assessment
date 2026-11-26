@@ -17,10 +17,12 @@ const currentMonth = localDate().slice(0,7)
 const month = ref(currentMonth), page = ref('总览'), mode = ref(localStorage.getItem('pocket-mode-v2') === 'demo' ? 'demo' : 'live'), mobile = ref(false)
 const bills = ref([]), stats = ref(null), trend = ref(null), loading = ref(false), busy = ref(false), error = ref(''), toast = ref('')
 const advice = ref(''), adviceStatus = ref(''), adviceLoading = ref(false)
+const adviceStale = ref(false), advicePrompt = ref('')
+const emptyAdviceMessage = '暂无消费记录，无法生成建议。'
 const keyword = ref(''), category = ref(''), pendingDelete = ref(null)
 const manual = ref(null)
 function openManual() { manual.value = { mode:mode.value, month:month.value } }
-function manualRecorded(source) { notify('这笔消费，记好啦'); recorded(source) }
+function manualRecorded(source, change) { notify('这笔消费，记好啦'); recorded(source, change) }
 const chat = ref(null), settingsMonth = ref(currentMonth), editorMonth = ref('')
 const budgetSnapshot = ref(null), budgetError = ref(''), defaultsVersion = ref(0)
 const budgetStatus = { NORMAL: '', NEAR: '接近预算', AT_LIMIT: '已用完', OVER: '超支' }
@@ -68,8 +70,13 @@ function defaultsSaved(message) {
   budgetSaved(message)
 }
 
-function recorded(source) {
-  if (mode.value === source) load()
+function recorded(source, change) {
+  if (mode.value !== source) return
+  if (change?.month === month.value && (advice.value || adviceLoading.value)) {
+    adviceStale.value = Boolean(advice.value)
+    advicePrompt.value = change.type === 'added' ? '有新账单录入，是否重新生成？' : '账单有变动，是否重新生成？'
+  }
+  return load()
 }
 const money = value => Number(value || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 function sixMonthsThrough(endingMonth) {
@@ -82,7 +89,7 @@ async function generateAdvice() {
   if (loading.value || adviceLoading.value) return
   const version = loadVersion
   const selectedMonth = month.value
-  advice.value = ''
+  advicePrompt.value = ''
   adviceStatus.value = ''
   adviceLoading.value = true
   try {
@@ -101,8 +108,9 @@ async function generateAdvice() {
       }
     }
     if (version !== loadVersion) return
-    if (result) advice.value = result.trim()
-    else adviceStatus.value = '所选月份还没有消费记录。记一笔后再生成建议。'
+    advice.value = result?.trim() || ''
+    adviceStale.value = false
+    if (!result) adviceStatus.value = emptyAdviceMessage
   } catch {
     if (version === loadVersion) adviceStatus.value = '暂无建议。请确认新版后端和 DeepSeek 已就绪，再试一次。'
   } finally {
@@ -120,7 +128,6 @@ async function load() {
   error.value = ''
   stats.value = null
   trend.value = null
-  advice.value = ''
   adviceStatus.value = ''
   adviceLoading.value = false
   loadBudget()
@@ -149,13 +156,26 @@ watch(mode, () => {
   editorMonth.value = ''
   pendingDelete.value = null
 })
-watch([month, mode], load)
+watch([month, mode], () => {
+  advice.value = ''
+  adviceStale.value = false
+  advicePrompt.value = ''
+  load()
+})
 watch(page, () => { editorMonth.value = '' })
 onMounted(load)
 const monthly = computed(() => bills.value.filter(b => b.occurredAt?.startsWith(month.value)))
 const filtered = computed(() => monthly.value.filter(b => (!category.value || b.category===category.value) && `${b.merchant||''}${b.note||''}`.toLowerCase().includes(keyword.value.toLowerCase())).sort((a,b)=>b.occurredAt.localeCompare(a.occurredAt)))
 const total = computed(() => monthly.value.reduce((s,b)=>s+Math.round(Number(b.amount)*100),0)/100)
 const groups = computed(() => stats.value?.items || categories.map(c=>({ category:c,total:monthly.value.filter(b=>b.category===c).reduce((s,b)=>s+Number(b.amount),0),count:monthly.value.filter(b=>b.category===c).length })).filter(x=>x.count).sort((a,b)=>b.total-a.total))
+const noAdviceBills = computed(() => !loading.value && !error.value
+  && (mode.value === 'live' && stats.value ? !stats.value.items.length : !monthly.value.length))
+watch(noAdviceBills, empty => {
+  if (empty) {
+    advice.value = ''
+    adviceStale.value = false
+  }
+})
 const totalBudget = computed(() => budgetSnapshot.value?.budgets.find(item => item.category === null))
 const categoryBudgets = computed(() => Object.fromEntries(
   (budgetSnapshot.value?.budgets || []).filter(item => item.category).map(item => [item.category, item])))
@@ -184,12 +204,14 @@ const pieOption = computed(() => ({tooltip:{trigger:'item',formatter:'{b}: ¥{c}
 async function remove() {
   if (busy.value) return
   const id = pendingDelete.value
+  const source = mode.value
+  const bill = bills.value.find(item => item.id === id)
   busy.value = true
   try {
-    if (mode.value === 'live') await api.remove(id)
+    if (source === 'live') await api.remove(id)
     else localStorage.setItem('pocket-bills', JSON.stringify(demoBills().filter(bill => bill.id !== id)))
     pendingDelete.value = null
-    await load()
+    await recorded(source, { type: 'deleted', month: bill?.occurredAt?.slice(0, 7) })
     notify('账单已删除')
   } catch (e) {
     notify(e.message)
@@ -234,11 +256,14 @@ function exportCSV(){ const cell=v=>'"'+String(v??'').replaceAll('"','""').repla
                   <h2 id="overview-advice-title"><Sparkles :size="19"/>消费建议</h2>
                   <p>{{ month }} · {{ mode === 'demo' ? '本地演示' : '根据该月消费统计生成' }}</p>
                 </div>
-                <button class="secondary" type="button" :disabled="loading || adviceLoading" @click="generateAdvice">
+                <button class="secondary" type="button" :disabled="loading || adviceLoading || noAdviceBills" @click="generateAdvice">
                   {{ adviceLoading ? '正在生成…' : '生成消费建议' }}
                 </button>
               </div>
-              <div v-if="advice || adviceStatus" class="overview-advice-result" role="status">{{ advice || adviceStatus }}</div>
+              <div v-if="noAdviceBills || adviceStatus || advice" class="overview-advice-result" role="status">
+                <template v-if="noAdviceBills">{{ emptyAdviceMessage }}</template>
+                <template v-else><p v-if="adviceStatus">{{ adviceStatus }}</p><p v-if="adviceStale && advice">账单已变动，以下是上次生成的建议。</p><p v-if="advice">{{ advice }}</p></template>
+              </div>
             </section>
             <div class="section-bar"><h2>{{page==='账单明细'?'账单记录':'收支概览'}} <span>{{mode==='demo'?'DEMO DATA':'MY LEDGER'}}</span></h2><input class="month" type="month" :value="month" @change="month = $event.target.value || month; $event.target.value = month" aria-label="选择月份"></div>
             <div class="metrics"><section class="metric dark"><div><span>本月总支出</span><Wallet :size="19"/></div><h3><small>¥</small>{{money(total)}}</h3><p><span class="metric-chip">{{monthly.length}} 笔记录</span> 每一笔，都值得被看见</p><div class="metric-orbit"></div></section><section class="metric"><div><span>日均消费</span><ArrowUpRight :size="19"/></div><h3><small>¥</small>{{money(total/(month===currentMonth?new Date().getDate():new Date(Number(month.slice(0,4)),Number(month.slice(5)),0).getDate()))}}</h3><p>按所选月份已过天数计算</p></section><section class="metric" :class="{ 'over-budget': totalBudget?.status === 'OVER' }">
@@ -281,6 +306,15 @@ function exportCSV(){ const cell=v=>'"'+String(v??'').replaceAll('"','""').repla
     </main>
     <ManualBill v-if="manual" :mode="manual.mode" :month="manual.month" :categories="categories" :save-demo="saveDemo" @close="manual=null" @recorded="manualRecorded"/>
     <div v-if="pendingDelete!==null" class="overlay"><section class="dialog compact" role="alertdialog" aria-modal="true"><h2>删除这笔账单？</h2><p>删除后无法恢复，请确认这笔记录不再需要。</p><div class="dialog-actions"><button class="secondary" :disabled="busy" @click="pendingDelete=null">取消</button><button class="danger" :disabled="busy" @click="remove">{{busy?'删除中…':'确认删除'}}</button></div></section></div>
+    <div v-if="advicePrompt" class="overlay">
+      <section class="dialog compact" role="alertdialog" aria-modal="true" aria-labelledby="advice-prompt-title" @keydown.esc="advicePrompt = ''">
+        <h2 id="advice-prompt-title">{{ advicePrompt }}</h2>
+        <div class="dialog-actions">
+          <button class="secondary" type="button" @click="advicePrompt = ''">暂不生成</button>
+          <button class="primary" type="button" :disabled="loading" @click="page = '总览'; generateAdvice()">重新生成</button>
+        </div>
+      </section>
+    </div>
     <div v-if="toast" class="toast" role="status">{{toast}}</div>
   </div>
 </template>

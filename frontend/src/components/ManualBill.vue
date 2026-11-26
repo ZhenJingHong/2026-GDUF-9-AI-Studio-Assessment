@@ -25,7 +25,8 @@ async function save() {
   try {
     if(props.mode==='demo') await props.saveDemo(actionId,bill)
     else await api.chatRecord({actionId,bill})
-    emit('recorded',props.mode); emit('close')
+    emit('close')
+    emit('recorded', props.mode, { type: 'added', month: bill.occurredAt.slice(0, 7) })
   } catch(e) { error.value=e.message||'保存失败，请重试' }
   finally { saving.value=false }
 }

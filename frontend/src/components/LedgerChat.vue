@@ -147,7 +147,7 @@ async function changeBill(session, text) {
   } else await api.updateAmount(bill.id, amount)
   session.billReference = [String(bill.id)]
   addMessage(session, 'assistant', `已更正原账单 #${bill.id}：¥${props.money(oldAmount)} → ¥${props.money(amount)}，没有新增账单。`)
-  emit('recorded', session.mode)
+  emit('recorded', session.mode, { type: 'updated', month: bill.occurredAt?.slice(0, 7) })
 }
 
 async function prepareDeletion(session, text) {
@@ -188,7 +188,7 @@ function confirmDeletion() {
     deletions.delete(session.id)
     session.billReference = (session.billReference || []).filter(id => id !== String(bill.id))
     addMessage(session, 'assistant', `已删除账单 #${bill.id}：${displayBillTime(bill)} · ¥${props.money(bill.amount)}。`)
-    emit('recorded', session.mode)
+    emit('recorded', session.mode, { type: 'deleted', month: bill.occurredAt?.slice(0, 7) })
   })
 }
 
@@ -218,7 +218,7 @@ async function runAction(session) {
     session.action = query ? { stage: 'query', query } : null
     addMessage(session, 'assistant', `${session.mode === 'demo' ? '演示账本' : '已入账'} · #${receipt.billId}\n${displayBillTime(bill)} · ${bill.category} · ¥${props.money(bill.amount)}`)
     persist()
-    emit('recorded', session.mode)
+    emit('recorded', session.mode, { type: 'added', month: bill.occurredAt?.slice(0, 7) })
   }
   if (session.action?.stage === 'query') {
     const result = await queryLedger(session, session.action.query)
