@@ -17,7 +17,7 @@ const currentMonth = localDate().slice(0,7)
 const month = ref(currentMonth), page = ref('总览'), mode = ref(localStorage.getItem('pocket-mode-v2') === 'demo' ? 'demo' : 'live'), mobile = ref(false)
 const bills = ref([]), stats = ref(null), trend = ref(null), loading = ref(false), busy = ref(false), error = ref(''), toast = ref('')
 const advice = ref(''), adviceStatus = ref(''), adviceLoading = ref(false)
-const adviceStale = ref(false), advicePrompt = ref('')
+const adviceStale = ref(false), advicePrompt = ref(''), adviceAutoPending = ref(true)
 const emptyAdviceMessage = '暂无消费记录，无法生成建议。'
 const keyword = ref(''), category = ref(''), pendingDelete = ref(null)
 const manual = ref(null)
@@ -72,7 +72,8 @@ function defaultsSaved(message) {
 
 function recorded(source, change) {
   if (mode.value !== source) return
-  if (change?.month === month.value && (advice.value || adviceLoading.value)) {
+  if (change?.month === month.value) {
+    adviceAutoPending.value = false
     adviceStale.value = Boolean(advice.value)
     advicePrompt.value = change.type === 'added' ? '有新账单录入，是否重新生成？' : '账单有变动，是否重新生成？'
   }
@@ -87,10 +88,12 @@ function sixMonthsThrough(endingMonth) {
 
 async function generateAdvice() {
   if (loading.value || adviceLoading.value) return
-  const version = loadVersion
-  const selectedMonth = month.value
+  adviceAutoPending.value = false
   advicePrompt.value = ''
   adviceStatus.value = ''
+  if (noAdviceBills.value) return
+  const version = loadVersion
+  const selectedMonth = month.value
   adviceLoading.value = true
   try {
     let result
@@ -100,7 +103,7 @@ async function generateAdvice() {
         result = `「${top.category}」是所选月份支出最多的类别，共 ¥${money(top.total)}。可以先回顾这一类消费，看看哪些开销可以减少，再给下个月的同类支出设个预算。`
       }
     } else {
-      const summary = await api.category(selectedMonth)
+      const summary = stats.value ?? await api.category(selectedMonth)
       if (version !== loadVersion) return
       if (summary.items.length) {
         result = await api.advice({ month: summary.month, total: summary.total, items: summary.items })
@@ -128,7 +131,7 @@ async function load() {
   error.value = ''
   stats.value = null
   trend.value = null
-  adviceStatus.value = ''
+  if (adviceLoading.value && !advicePrompt.value && !advice.value) adviceAutoPending.value = true
   adviceLoading.value = false
   loadBudget()
   try {
@@ -160,6 +163,8 @@ watch([month, mode], () => {
   advice.value = ''
   adviceStale.value = false
   advicePrompt.value = ''
+  adviceStatus.value = ''
+  adviceAutoPending.value = true
   load()
 })
 watch(page, () => { editorMonth.value = '' })
@@ -176,6 +181,17 @@ watch(noAdviceBills, empty => {
     adviceStale.value = false
   }
 })
+watch([page, loading, error, adviceAutoPending], () => {
+  if (page.value !== '总览' || loading.value || error.value || !adviceAutoPending.value) return
+  if (noAdviceBills.value) adviceAutoPending.value = false
+  else generateAdvice()
+})
+
+function dismissAdvicePrompt() {
+  advicePrompt.value = ''
+  if (!advice.value) adviceStatus.value = '已暂缓生成建议。下次账单变动时会再次提示。'
+}
+
 const totalBudget = computed(() => budgetSnapshot.value?.budgets.find(item => item.category === null))
 const categoryBudgets = computed(() => Object.fromEntries(
   (budgetSnapshot.value?.budgets || []).filter(item => item.category).map(item => [item.category, item])))
@@ -256,12 +272,11 @@ function exportCSV(){ const cell=v=>'"'+String(v??'').replaceAll('"','""').repla
                   <h2 id="overview-advice-title"><Sparkles :size="19"/>消费建议</h2>
                   <p>{{ month }} · {{ mode === 'demo' ? '本地演示' : '根据该月消费统计生成' }}</p>
                 </div>
-                <button class="secondary" type="button" :disabled="loading || adviceLoading || noAdviceBills" @click="generateAdvice">
-                  {{ adviceLoading ? '正在生成…' : '生成消费建议' }}
-                </button>
               </div>
-              <div v-if="noAdviceBills || adviceStatus || advice" class="overview-advice-result" role="status">
+              <div v-if="loading || adviceLoading || noAdviceBills || adviceStatus || advice" class="overview-advice-result" role="status">
                 <template v-if="noAdviceBills">{{ emptyAdviceMessage }}</template>
+                <template v-else-if="adviceLoading">正在生成消费建议…</template>
+                <template v-else-if="loading && !advice">正在读取账单…</template>
                 <template v-else><p v-if="adviceStatus">{{ adviceStatus }}</p><p v-if="adviceStale && advice">账单已变动，以下是上次生成的建议。</p><p v-if="advice">{{ advice }}</p></template>
               </div>
             </section>
@@ -307,10 +322,10 @@ function exportCSV(){ const cell=v=>'"'+String(v??'').replaceAll('"','""').repla
     <ManualBill v-if="manual" :mode="manual.mode" :month="manual.month" :categories="categories" :save-demo="saveDemo" @close="manual=null" @recorded="manualRecorded"/>
     <div v-if="pendingDelete!==null" class="overlay"><section class="dialog compact" role="alertdialog" aria-modal="true"><h2>删除这笔账单？</h2><p>删除后无法恢复，请确认这笔记录不再需要。</p><div class="dialog-actions"><button class="secondary" :disabled="busy" @click="pendingDelete=null">取消</button><button class="danger" :disabled="busy" @click="remove">{{busy?'删除中…':'确认删除'}}</button></div></section></div>
     <div v-if="advicePrompt" class="overlay">
-      <section class="dialog compact" role="alertdialog" aria-modal="true" aria-labelledby="advice-prompt-title" @keydown.esc="advicePrompt = ''">
+      <section class="dialog compact" role="alertdialog" aria-modal="true" aria-labelledby="advice-prompt-title" @keydown.esc="dismissAdvicePrompt">
         <h2 id="advice-prompt-title">{{ advicePrompt }}</h2>
         <div class="dialog-actions">
-          <button class="secondary" type="button" @click="advicePrompt = ''">暂不生成</button>
+          <button class="secondary" type="button" @click="dismissAdvicePrompt">暂不生成</button>
           <button class="primary" type="button" :disabled="loading" @click="page = '总览'; generateAdvice()">重新生成</button>
         </div>
       </section>
