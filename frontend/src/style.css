@@ -118,3 +118,9 @@
 .delete-candidates label { display: block; padding: 6px 2px; overflow-wrap: anywhere; }
 .delete-candidates input { margin-right: 6px; }
 .delete-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+
+.overview-advice { margin-bottom: 20px; padding: 18px 22px; border: 1px solid #e1e9dd; background: #f8faf4; }
+.overview-advice-header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
+.overview-advice h2 { display: flex; align-items: center; gap: 8px; font-size: 16px; }
+.overview-advice-header p { margin-top: 5px; color: #596f61; font-size: 12px; }
+.overview-advice-result { margin-top: 14px; padding-top: 12px; border-top: 1px solid #e1e9dd; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.7; }

@@ -32,6 +32,7 @@ export const api = {
   category: month => request('/stat/category', { query: { month } }),
   trend: (from, to) => request('/stat/trend', { query: { from, to } }),
   range: query => request('/stat/range', { query }),
+  advice: stats => request('/ai/advice', { method: 'POST', body: { stats } }),
   chat: body => request('/ai/chat', { method: 'POST', body }),
   chatRecord: body => request('/ai/chat/records', { method: 'POST', body }),
   budgetDefaults: () => request('/budget/defaults'),

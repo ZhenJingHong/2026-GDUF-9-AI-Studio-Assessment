@@ -266,9 +266,10 @@ function submit() {
     session.input=''; addMessage(session,'user',text)
     run(session,()=>changeBill(session,text)); return
   }
-  const userMessages = session.messages.flatMap((message, index) => message.role === 'user' ? [index] : [])
+  const chatMessages = session.messages.filter(message => message.kind !== 'ADVICE')
+  const userMessages = chatMessages.flatMap((message, index) => message.role === 'user' ? [index] : [])
   const start = userMessages.at(-6) ?? 0
-  const history = session.messages.slice(start).map(({ role, content }) => ({ role, content }))
+  const history = chatMessages.slice(start).map(({ role, content }) => ({ role, content }))
   session.action = { stage: 'parse', month: props.month, request: { text, history, pending: session.pending, sentAt: Date.now() } }
   session.input = ''
   addMessage(session, 'user', text)

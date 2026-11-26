@@ -16,6 +16,7 @@ const currentMonth = localDate().slice(0,7)
 // 使用新的设置键，让旧版浏览器中的演示模式不影响本次默认后端连接。
 const month = ref(currentMonth), page = ref('总览'), mode = ref(localStorage.getItem('pocket-mode-v2') === 'demo' ? 'demo' : 'live'), mobile = ref(false)
 const bills = ref([]), stats = ref(null), trend = ref(null), loading = ref(false), busy = ref(false), error = ref(''), toast = ref('')
+const advice = ref(''), adviceStatus = ref(''), adviceLoading = ref(false)
 const keyword = ref(''), category = ref(''), pendingDelete = ref(null)
 const manual = ref(null)
 function openManual() { manual.value = { mode:mode.value, month:month.value } }
@@ -71,6 +72,44 @@ function recorded(source) {
   if (mode.value === source) load()
 }
 const money = value => Number(value || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+function sixMonthsThrough(endingMonth) {
+  const end = new Date(endingMonth + '-01T12:00:00')
+  return Array.from({ length: 6 }, (_, index) =>
+    localDate(new Date(end.getFullYear(), end.getMonth() + index - 5, 1)).slice(0, 7))
+}
+
+async function generateAdvice() {
+  if (loading.value || adviceLoading.value) return
+  const version = loadVersion
+  const selectedMonth = month.value
+  advice.value = ''
+  adviceStatus.value = ''
+  adviceLoading.value = true
+  try {
+    let result
+    if (mode.value === 'demo') {
+      const top = groups.value[0]
+      if (top) {
+        result = `「${top.category}」是所选月份支出最多的类别，共 ¥${money(top.total)}。可以先回顾这一类消费，看看哪些开销可以减少，再给下个月的同类支出设个预算。`
+      }
+    } else {
+      const summary = await api.category(selectedMonth)
+      if (version !== loadVersion) return
+      if (summary.items.length) {
+        result = await api.advice({ month: summary.month, total: summary.total, items: summary.items })
+        if (typeof result !== 'string' || !result.trim()) throw new Error('建议为空')
+      }
+    }
+    if (version !== loadVersion) return
+    if (result) advice.value = result.trim()
+    else adviceStatus.value = '所选月份还没有消费记录。记一笔后再生成建议。'
+  } catch {
+    if (version === loadVersion) adviceStatus.value = '暂无建议。请确认新版后端和 DeepSeek 已就绪，再试一次。'
+  } finally {
+    if (version === loadVersion) adviceLoading.value = false
+  }
+}
+
 function seed() { return Array.from({length:36}, (_, i) => ({ id: i+1, amount: [28,18,128,36,25,68,52,19.9,239,42,12,88][i%12], category: categories[i%8], merchant: ['校园食堂','滴滴出行','生活好物','周末电影','日常生活','健康药房','书店','便利店'][i%8], note: ['午餐，认真吃饭','出门办事','给生活添一点新意','休息一下','日常开销','健康第一','学习投资','随手记录'][i%8], occurredAt: `${currentMonth}-${String(Math.max(1, new Date().getDate() - Math.floor(i/3))).padStart(2,'0')} ${String(10+i%10).padStart(2,'0')}:30:00` })) }
 function notify(text) { toast.value = text; setTimeout(() => { if(toast.value === text) toast.value = '' }, 3500) }
 async function load() {
@@ -81,15 +120,17 @@ async function load() {
   error.value = ''
   stats.value = null
   trend.value = null
+  advice.value = ''
+  adviceStatus.value = ''
+  adviceLoading.value = false
   loadBudget()
   try {
     const rows = selectedMode === 'demo' ? demoBills() : await api.bills({ month: selectedMonth })
     if (version !== loadVersion) return
     bills.value = rows
     if (selectedMode === 'live') {
-      const from = new Date(`${selectedMonth}-01T12:00:00`)
-      from.setMonth(from.getMonth() - 5)
-      const results = await Promise.allSettled([api.category(selectedMonth), api.trend(localDate(from).slice(0, 7), selectedMonth)])
+      const [from] = sixMonthsThrough(selectedMonth)
+      const results = await Promise.allSettled([api.category(selectedMonth), api.trend(from, selectedMonth)])
       if (version !== loadVersion) return
       if (results[0].status === 'fulfilled') stats.value = results[0].value
       if (results[1].status === 'fulfilled') trend.value = results[1].value
@@ -119,9 +160,23 @@ const totalBudget = computed(() => budgetSnapshot.value?.budgets.find(item => it
 const categoryBudgets = computed(() => Object.fromEntries(
   (budgetSnapshot.value?.budgets || []).filter(item => item.category).map(item => [item.category, item])))
 const alerts = computed(() => budgetSnapshot.value?.budgets.filter(item => item.status === 'OVER') || [])
+const overviewMonths = computed(() => sixMonthsThrough(month.value))
+const overviewTrend = computed(() => {
+  if (mode.value === 'live') return trend.value
+  const months = overviewMonths.value
+  const totals = new Map(months.map(label => [label, 0]))
+  for (const bill of bills.value) {
+    const label = bill.occurredAt?.slice(0, 7)
+    if (totals.has(label)) totals.set(label, totals.get(label) + Math.round(Number(bill.amount) * 100))
+  }
+  return { months, totals: months.map(label => totals.get(label) / 100) }
+})
+const overviewTrendLabel = computed(() => overviewTrend.value?.months.map((label, i) =>
+  `${label} 支出 ¥${money(overviewTrend.value.totals[i])}`).join('，'))
 const lineOption = computed(() => {
   let labels, values
-  if(page.value==='消费分析' && trend.value) { labels=trend.value.months; values=trend.value.totals }
+  if (page.value === '总览' && overviewTrend.value) { labels = overviewTrend.value.months; values = overviewTrend.value.totals }
+  else if(page.value==='消费分析' && trend.value) { labels=trend.value.months; values=trend.value.totals }
   else { const days = new Date(Number(month.value.slice(0,4)),Number(month.value.slice(5)),0).getDate(); labels=Array.from({length:days},(_,i)=>String(i+1)); values=labels.map(d=>monthly.value.filter(b=>Number(b.occurredAt.slice(8,10))===Number(d)).reduce((s,b)=>s+Number(b.amount),0)) }
   return { tooltip:{trigger:'axis',valueFormatter:v=>`¥${money(v)}`},grid:{left:45,right:18,top:24,bottom:25},xAxis:{type:'category',data:labels,axisLine:{show:false},axisTick:{show:false},axisLabel:{color:'#8b968f',interval:Math.max(0,Math.floor(labels.length/7)-1)}},yAxis:{type:'value',splitLine:{lineStyle:{color:'#edf0eb',type:'dashed'}},axisLabel:{color:'#8b968f'}},series:[{type:'line',smooth:true,data:values,symbol:'none',lineStyle:{color:'#34765b',width:3},areaStyle:{color:{type:'linear',x:0,y:0,x2:0,y2:1,colorStops:[{offset:0,color:'#b7d7beaa'},{offset:1,color:'#ffffff00'}]}}}] }
 })
@@ -173,6 +228,18 @@ function exportCSV(){ const cell=v=>'"'+String(v??'').replaceAll('"','""').repla
         </template>
         <template v-else>
           <template v-if="page!=='AI 助手'">
+            <section v-if="page === '总览'" class="card overview-advice" aria-labelledby="overview-advice-title">
+              <div class="overview-advice-header">
+                <div>
+                  <h2 id="overview-advice-title"><Sparkles :size="19"/>消费建议</h2>
+                  <p>{{ month }} · {{ mode === 'demo' ? '本地演示' : '根据该月消费统计生成' }}</p>
+                </div>
+                <button class="secondary" type="button" :disabled="loading || adviceLoading" @click="generateAdvice">
+                  {{ adviceLoading ? '正在生成…' : '生成消费建议' }}
+                </button>
+              </div>
+              <div v-if="advice || adviceStatus" class="overview-advice-result" role="status">{{ advice || adviceStatus }}</div>
+            </section>
             <div class="section-bar"><h2>{{page==='账单明细'?'账单记录':'收支概览'}} <span>{{mode==='demo'?'DEMO DATA':'MY LEDGER'}}</span></h2><input class="month" type="month" :value="month" @change="month = $event.target.value || month; $event.target.value = month" aria-label="选择月份"></div>
             <div class="metrics"><section class="metric dark"><div><span>本月总支出</span><Wallet :size="19"/></div><h3><small>¥</small>{{money(total)}}</h3><p><span class="metric-chip">{{monthly.length}} 笔记录</span> 每一笔，都值得被看见</p><div class="metric-orbit"></div></section><section class="metric"><div><span>日均消费</span><ArrowUpRight :size="19"/></div><h3><small>¥</small>{{money(total/(month===currentMonth?new Date().getDate():new Date(Number(month.slice(0,4)),Number(month.slice(5)),0).getDate()))}}</h3><p>按所选月份已过天数计算</p></section><section class="metric" :class="{ 'over-budget': totalBudget?.status === 'OVER' }">
                 <div><span>{{totalBudget?.status === 'OVER' ? '总预算已超支' : '总预算剩余'}}</span><Leaf :size="19"/></div>
@@ -195,7 +262,14 @@ function exportCSV(){ const cell=v=>'"'+String(v??'').replaceAll('"','""').repla
             </div>
             <BudgetForm v-if="editorMonth" :key="mode + editorMonth" :mode="mode" :month="editorMonth"
               :categories="categories" :demo-bills="demoBills" closeable @close="editorMonth=''" @saved="budgetSaved"/>
-            <div v-if="page!=='账单明细'" class="charts-grid"><section class="card trend-card"><div class="card-heading"><div><h2>{{page==='消费分析'&&trend?'月度支出趋势':'每日消费趋势'}}</h2><p>给消费一点觉察，让生活多一份从容</p></div><span class="legend"><i></i>支出金额</span></div><Chart :option="lineOption"/><div v-if="!monthly.length&&!trend" class="empty">本月还没有消费记录</div></section><section class="card category-card"><div class="card-heading"><h2>钱都花在哪儿</h2><SlidersHorizontal :size="17"/></div><div class="pie-wrap"><Chart :option="pieOption"/><div class="pie-label"><small>支出分布</small><strong>{{groups.length}}<small> 类</small></strong></div></div><div class="category-legend"><div v-for="g in (page==='消费分析' ? groups : groups.slice(0,4))" :key="g.category"><i :style="{background:colors[categories.indexOf(g.category)]}"></i><span>{{g.category}}
+            <div v-if="page!=='账单明细'" class="charts-grid"><section class="card trend-card"><div class="card-heading"><div><h2>{{page==='总览'?'近半年消费趋势':page==='消费分析'&&trend?'月度支出趋势':'每日消费趋势'}}</h2><p v-if="page === '总览'">{{ overviewMonths[0] }} 至 {{ month }} · 按月汇总</p><p v-else>给消费一点觉察，让生活多一份从容</p></div><span class="legend"><i></i>支出金额</span></div><template v-if="page === '总览'">
+              <div v-if="loading" class="empty" role="status">正在加载半年趋势…</div>
+              <div v-else-if="!overviewTrend" class="empty">暂时无法加载半年趋势。<button class="text-button" type="button" @click="load">重试</button></div>
+              <template v-else>
+                <Chart :option="lineOption" :aria-label="overviewTrendLabel"/>
+                <div v-if="overviewTrend.totals.every(value => value === 0)" class="empty">这六个月还没有消费记录</div>
+              </template>
+            </template><template v-else><Chart :option="lineOption"/><div v-if="!monthly.length&&!trend" class="empty">本月还没有消费记录</div></template></section><section class="card category-card"><div class="card-heading"><h2>钱都花在哪儿</h2><SlidersHorizontal :size="17"/></div><div class="pie-wrap"><Chart :option="pieOption"/><div class="pie-label"><small>支出分布</small><strong>{{groups.length}}<small> 类</small></strong></div></div><div class="category-legend"><div v-for="g in (page==='消费分析' ? groups : groups.slice(0,4))" :key="g.category"><i :style="{background:colors[categories.indexOf(g.category)]}"></i><span>{{g.category}}
               <small v-if="page==='消费分析' && budgetStatus[categoryBudgets[g.category]?.status]"
                 class="budget-tag" :class="categoryBudgets[g.category].status">{{budgetStatus[categoryBudgets[g.category].status]}}</small>
               </span><b>{{money(g.total)}}</b></div></div><p v-if="!groups.length" class="empty">记下第一笔，开始了解自己</p></section></div>
