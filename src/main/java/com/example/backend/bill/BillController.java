@@ -71,66 +71,57 @@ public class BillController {
         }).orElseGet(() -> ApiResponse.fail(40401, "原账单不存在，无法更正"));
     }
 
-    /** 查询账单列表，支持按月份、分类、关键词筛选，以及安全分页 */
     @GetMapping
     public ApiResponse<List<Bill>> list(
             @RequestParam(required = false) String month,
             @RequestParam(required = false) String category,
             @RequestParam(required = false) String keyword,
-            // 【新增】接收前端传来的分页参数，默认第1页，每页10条
-            @RequestParam(defaultValue = "1") Integer page,
-            @RequestParam(defaultValue = "10") Integer size) {
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "10") int size) {
+        return ApiResponse.ok(slice(matchingBills(month, category, keyword), Math.max(1, page), pageSize(size)));
+    }
 
-        // 强制限制 page 和 size
+    record BillPage(List<Bill> items, int page, int size, int total, BigDecimal amount) {}
 
-        // 1. 页码不能小于1（防止传 -1 或 0）
-        if (page == null || page < 1) {
-            page = 1;
-        }
-        // 2. 每页条数限制在 1 到 50 之间（防止恶意传 size=999999 把内存撑爆）
-        if (size == null || size < 1) {
-            size = 10;
-        }
-        if (size > 50) {
-            size = 50;
-        }
+    @GetMapping("/page")
+    public ApiResponse<BillPage> listPage(
+            @RequestParam(required = false) String month,
+            @RequestParam(required = false) String category,
+            @RequestParam(required = false) String keyword,
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "10") int size) {
+        List<Bill> matches = matchingBills(month, category, keyword);
+        int limit = pageSize(size);
+        int total = matches.size();
+        int lastPage = total == 0 ? 1 : (total - 1) / limit + 1;
+        int current = Math.max(1, Math.min(page, lastPage));
+        BigDecimal amount = matches.stream().map(Bill::getAmount).reduce(BigDecimal.ZERO, BigDecimal::add);
+        return ApiResponse.ok(new BillPage(slice(matches, current, limit), current, limit, total, amount));
+    }
 
+    private List<Bill> matchingBills(String month, String category, String keyword) {
         String start = null;
         String end = null;
-
-        // 处理 month 参数
         if (month != null && !month.isEmpty()) {
-            start = month + "-01 00:00:00";
             try {
-                java.time.YearMonth ym = java.time.YearMonth.parse(month);
-                end = month + "-" + ym.lengthOfMonth() + " 23:59:59";
-            } catch (Exception e) {
-                start = null; end = null;
+                java.time.YearMonth period = java.time.YearMonth.parse(month);
+                start = period.atDay(1) + " 00:00:00";
+                end = period.atEndOfMonth() + " 23:59:59";
+            } catch (java.time.format.DateTimeParseException ignored) {
+                // Preserve the legacy list behavior when a month is invalid.
             }
         }
+        return repository.findBillsWithConditions(start, end, category, keyword);
+    }
 
-        // 调用 Repository 查出符合条件的所有数据
-        List<Bill> allBills = repository.findBillsWithConditions(start, end, category, keyword);
+    private static int pageSize(int size) {
+        return size < 1 ? 10 : Math.min(size, 50);
+    }
 
-
-        // 在内存中进行安全的分页截取
-
-        int total = allBills.size();
-        long offset = (page - 1L) * size;
-
-        // 如果算出来的起始位置已经超过了总条数，说明前端查的页码太大了，直接返回空列表
-        if (offset >= total) {
-            return ApiResponse.ok(new java.util.ArrayList<>());
-        }
-
-        // 计算结束位置，使用 Math.min 防止 toIndex 越界
-        int fromIndex = (int) offset;
-        int toIndex = (int) Math.min(offset + size, total);
-
-        // 截取当前页的数据
-        List<Bill> pagedBills = allBills.subList(fromIndex, toIndex);
-
-        return ApiResponse.ok(pagedBills);
+    private static List<Bill> slice(List<Bill> rows, int page, int size) {
+        long start = (page - 1L) * size;
+        if (start >= rows.size()) return List.of();
+        return rows.subList((int) start, (int) Math.min(start + size, rows.size()));
     }
 
     record DeleteSnapshot(BigDecimal amount, String occurredAt, String category, String merchant,

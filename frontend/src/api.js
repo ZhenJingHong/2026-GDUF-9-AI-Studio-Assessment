@@ -23,6 +23,7 @@ export const api = {
   budget: month => request('/budget', { query: { month } }),
   saveBudget: body => request('/budget', { method: 'POST', body }),
   bills: query => request('/bill', { query }),
+  billPage: query => request('/bill/page', { query }),
   add: body => request('/bill', { method: 'POST', body }),
   remove: id => request(`/bill/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   deleteFilter: text => request('/ai/chat/delete-filter', { method: 'POST', body: { text } }),

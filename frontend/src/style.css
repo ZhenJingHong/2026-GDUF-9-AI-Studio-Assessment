@@ -124,3 +124,5 @@
 .overview-advice h2 { display: flex; align-items: center; gap: 8px; font-size: 16px; }
 .overview-advice-header p { margin-top: 5px; color: #596f61; font-size: 12px; }
 .overview-advice-result { margin-top: 14px; padding-top: 12px; border-top: 1px solid #e1e9dd; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.7; }
+
+.bill-pagination { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 10px; padding: 14px 18px; border-top: 1px solid #edf0eb; }

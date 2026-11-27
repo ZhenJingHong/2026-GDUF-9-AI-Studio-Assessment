@@ -20,6 +20,10 @@ const advice = ref(''), adviceStatus = ref(''), adviceLoading = ref(false)
 const adviceStale = ref(false), advicePrompt = ref(''), adviceAutoPending = ref(true)
 const emptyAdviceMessage = '暂无消费记录，无法生成建议。'
 const keyword = ref(''), category = ref(''), pendingDelete = ref(null)
+const BILL_PAGE_SIZE = 10
+const billPage = ref(1), table = ref(null), tableLoading = ref(false), tableError = ref('')
+const exporting = ref(false)
+let tableVersion = 0
 const manual = ref(null)
 function openManual() { manual.value = { mode:mode.value, month:month.value } }
 function manualRecorded(source, change) { notify('这笔消费，记好啦'); recorded(source, change) }
@@ -123,6 +127,38 @@ async function generateAdvice() {
 
 function seed() { return Array.from({length:36}, (_, i) => ({ id: i+1, amount: [28,18,128,36,25,68,52,19.9,239,42,12,88][i%12], category: categories[i%8], merchant: ['校园食堂','滴滴出行','生活好物','周末电影','日常生活','健康药房','书店','便利店'][i%8], note: ['午餐，认真吃饭','出门办事','给生活添一点新意','休息一下','日常开销','健康第一','学习投资','随手记录'][i%8], occurredAt: `${currentMonth}-${String(Math.max(1, new Date().getDate() - Math.floor(i/3))).padStart(2,'0')} ${String(10+i%10).padStart(2,'0')}:30:00` })) }
 function notify(text) { toast.value = text; setTimeout(() => { if(toast.value === text) toast.value = '' }, 3500) }
+async function loadTable() {
+  const version = ++tableVersion
+  tableError.value = ''
+  if (mode.value === 'demo') {
+    table.value = null
+    tableLoading.value = false
+    return
+  }
+  tableLoading.value = true
+  try {
+    const result = await api.billPage({
+      month: month.value, category: category.value, keyword: keyword.value.trim(),
+      page: page.value === '账单明细' ? billPage.value : 1,
+      size: BILL_PAGE_SIZE,
+    })
+    if (version !== tableVersion) return
+    table.value = result
+    if (page.value === '账单明细') billPage.value = result.page
+  } catch (e) {
+    if (version !== tableVersion) return
+    table.value = null
+    tableError.value = e.message || '账单加载失败'
+  } finally {
+    if (version === tableVersion) tableLoading.value = false
+  }
+}
+
+function turnBillPage(next) {
+  billPage.value = next
+  if (mode.value === 'live') loadTable()
+}
+
 async function load() {
   const version = ++loadVersion
   const selectedMonth = month.value
@@ -134,8 +170,9 @@ async function load() {
   if (adviceLoading.value && !advicePrompt.value && !advice.value) adviceAutoPending.value = true
   adviceLoading.value = false
   loadBudget()
+  const tableRequest = loadTable()
   try {
-    const rows = selectedMode === 'demo' ? demoBills() : await api.bills({ month: selectedMonth })
+    const rows = selectedMode === 'demo' ? demoBills() : []
     if (version !== loadVersion) return
     bills.value = rows
     if (selectedMode === 'live') {
@@ -143,6 +180,7 @@ async function load() {
       const results = await Promise.allSettled([api.category(selectedMonth), api.trend(from, selectedMonth)])
       if (version !== loadVersion) return
       if (results[0].status === 'fulfilled') stats.value = results[0].value
+      else error.value = '整月统计加载失败'
       if (results[1].status === 'fulfilled') trend.value = results[1].value
     }
   } catch (e) {
@@ -151,7 +189,11 @@ async function load() {
       error.value = e.message || '连接失败'
     }
   } finally {
-    if (version === loadVersion) loading.value = false
+    if (version === loadVersion) {
+      if (selectedMode === 'demo') billPage.value = Math.min(billPage.value, lastBillPage.value)
+      loading.value = false
+    }
+    await tableRequest
   }
 }
 watch(mode, () => {
@@ -160,6 +202,7 @@ watch(mode, () => {
   pendingDelete.value = null
 })
 watch([month, mode], () => {
+  billPage.value = 1
   advice.value = ''
   adviceStale.value = false
   advicePrompt.value = ''
@@ -167,14 +210,42 @@ watch([month, mode], () => {
   adviceAutoPending.value = true
   load()
 })
-watch(page, () => { editorMonth.value = '' })
+watch(page, (next, previous) => {
+  editorMonth.value = ''
+  if (next === '账单明细' || previous === '账单明细') {
+    billPage.value = 1
+    loadTable()
+  }
+})
+watch([keyword, category], () => {
+  billPage.value = 1
+  loadTable()
+})
 onMounted(load)
 const monthly = computed(() => bills.value.filter(b => b.occurredAt?.startsWith(month.value)))
-const filtered = computed(() => monthly.value.filter(b => (!category.value || b.category===category.value) && `${b.merchant||''}${b.note||''}`.toLowerCase().includes(keyword.value.toLowerCase())).sort((a,b)=>b.occurredAt.localeCompare(a.occurredAt)))
-const total = computed(() => monthly.value.reduce((s,b)=>s+Math.round(Number(b.amount)*100),0)/100)
-const groups = computed(() => stats.value?.items || categories.map(c=>({ category:c,total:monthly.value.filter(b=>b.category===c).reduce((s,b)=>s+Number(b.amount),0),count:monthly.value.filter(b=>b.category===c).length })).filter(x=>x.count).sort((a,b)=>b.total-a.total))
-const noAdviceBills = computed(() => !loading.value && !error.value
-  && (mode.value === 'live' && stats.value ? !stats.value.items.length : !monthly.value.length))
+const demoFiltered = computed(() => monthly.value.filter(bill =>
+  (!category.value || bill.category === category.value)
+  && [bill.merchant, bill.note].some(value => (value || '').toLowerCase().includes(keyword.value.trim().toLowerCase())))
+  .sort((a, b) => b.occurredAt.localeCompare(a.occurredAt)))
+const tableTotal = computed(() => mode.value === 'demo' ? demoFiltered.value.length : table.value?.total)
+const tableAmount = computed(() => mode.value === 'demo'
+  ? demoFiltered.value.reduce((sum, bill) => sum + Math.round(Number(bill.amount) * 100), 0) / 100
+  : table.value?.amount)
+const lastBillPage = computed(() => Math.max(1, Math.ceil((tableTotal.value ?? 0) / BILL_PAGE_SIZE)))
+const displayedBills = computed(() => {
+  if (mode.value === 'live') return page.value === '账单明细' ? table.value?.items ?? [] : (table.value?.items ?? []).slice(0, 5)
+  if (page.value !== '账单明细') return demoFiltered.value.slice(0, 5)
+  const first = (billPage.value - 1) * BILL_PAGE_SIZE
+  return demoFiltered.value.slice(first, first + BILL_PAGE_SIZE)
+})
+const total = computed(() => mode.value === 'live' ? stats.value?.total
+  : monthly.value.reduce((sum, bill) => sum + Math.round(Number(bill.amount) * 100), 0) / 100)
+const monthlyCount = computed(() => mode.value === 'demo' ? monthly.value.length
+  : stats.value?.items.reduce((count, item) => count + item.count, 0))
+const groups = computed(() => mode.value === 'live' ? stats.value?.items ?? []
+  : categories.map(c => ({ category: c, total: monthly.value.filter(b => b.category === c).reduce((sum, b) => sum + Number(b.amount), 0),
+    count: monthly.value.filter(b => b.category === c).length })).filter(x => x.count).sort((a, b) => b.total - a.total))
+const noAdviceBills = computed(() => !loading.value && !error.value && monthlyCount.value === 0)
 watch(noAdviceBills, empty => {
   if (empty) {
     advice.value = ''
@@ -221,7 +292,7 @@ async function remove() {
   if (busy.value) return
   const id = pendingDelete.value
   const source = mode.value
-  const bill = bills.value.find(item => item.id === id)
+  const bill = displayedBills.value.find(item => item.id === id)
   busy.value = true
   try {
     if (source === 'live') await api.remove(id)
@@ -235,7 +306,42 @@ async function remove() {
     busy.value = false
   }
 }
-function exportCSV(){ const cell=v=>'"'+String(v??'').replaceAll('"','""').replace(/^[=+@-]/,"'$&")+'"';const csv='\uFEFF'+[['日期','分类','商户','金额','备注'],...filtered.value.map(b=>[b.occurredAt,b.category,b.merchant,b.amount,b.note])].map(r=>r.map(cell).join(',')).join('\r\n');const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download=`小账-${month.value}.csv`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000) }
+async function exportCSV() {
+  if (exporting.value) return
+  const selection = { month: month.value, category: category.value, keyword: keyword.value.trim() }
+  exporting.value = true
+  try {
+    let rows = demoFiltered.value
+    if (mode.value === 'live') {
+      rows = []
+      const seen = new Set()
+      const size = 50
+      for (let page = 1; ; page++) {
+        const batch = await api.bills({ ...selection, page, size })
+        for (const bill of batch) {
+          if (seen.has(bill.id)) throw new Error('导出时账单有变动，请重试')
+          seen.add(bill.id)
+          rows.push(bill)
+        }
+        if (batch.length < size) break
+      }
+    }
+    const cell = value => '"' + String(value ?? '').replaceAll('"', '""').replace(/^[=+@-]/, "'$&") + '"'
+    const data = [['日期', '分类', '商户', '金额', '备注'], ...rows.map(bill =>
+      [bill.occurredAt, bill.category, bill.merchant, bill.amount, bill.note])]
+    const csv = '\uFEFF' + data.map(row => row.map(cell).join(',')).join('\r\n')
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }))
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `小账-${selection.month}.csv`
+    link.click()
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
+  } catch (error) {
+    notify(error.message || '导出失败，请重试')
+  } finally {
+    exporting.value = false
+  }
+}
 </script>
 
 <template>
@@ -281,7 +387,7 @@ function exportCSV(){ const cell=v=>'"'+String(v??'').replaceAll('"','""').repla
               </div>
             </section>
             <div class="section-bar"><h2>{{page==='账单明细'?'账单记录':'收支概览'}} <span>{{mode==='demo'?'DEMO DATA':'MY LEDGER'}}</span></h2><input class="month" type="month" :value="month" @change="month = $event.target.value || month; $event.target.value = month" aria-label="选择月份"></div>
-            <div class="metrics"><section class="metric dark"><div><span>本月总支出</span><Wallet :size="19"/></div><h3><small>¥</small>{{money(total)}}</h3><p><span class="metric-chip">{{monthly.length}} 笔记录</span> 每一笔，都值得被看见</p><div class="metric-orbit"></div></section><section class="metric"><div><span>日均消费</span><ArrowUpRight :size="19"/></div><h3><small>¥</small>{{money(total/(month===currentMonth?new Date().getDate():new Date(Number(month.slice(0,4)),Number(month.slice(5)),0).getDate()))}}</h3><p>按所选月份已过天数计算</p></section><section class="metric" :class="{ 'over-budget': totalBudget?.status === 'OVER' }">
+            <div class="metrics"><section class="metric dark"><div><span>本月总支出</span><Wallet :size="19"/></div><h3 v-if="total != null"><small>¥</small>{{money(total)}}</h3><h3 v-else>—</h3><p><span class="metric-chip">{{monthlyCount ?? '—'}} 笔记录</span> 每一笔，都值得被看见</p><div class="metric-orbit"></div></section><section class="metric"><div><span>日均消费</span><ArrowUpRight :size="19"/></div><h3 v-if="total != null"><small>¥</small>{{money(total/(month===currentMonth?new Date().getDate():new Date(Number(month.slice(0,4)),Number(month.slice(5)),0).getDate()))}}</h3><h3 v-else>—</h3><p>按所选月份已过天数计算</p></section><section class="metric" :class="{ 'over-budget': totalBudget?.status === 'OVER' }">
                 <div><span>{{totalBudget?.status === 'OVER' ? '总预算已超支' : '总预算剩余'}}</span><Leaf :size="19"/></div>
                 <template v-if="totalBudget">
                   <h3><small>¥</small>{{money(totalBudget.status === 'OVER' ? totalBudget.excess : totalBudget.remaining)}}</h3>
@@ -309,11 +415,14 @@ function exportCSV(){ const cell=v=>'"'+String(v??'').replaceAll('"','""').repla
                 <Chart :option="lineOption" :aria-label="overviewTrendLabel"/>
                 <div v-if="overviewTrend.totals.every(value => value === 0)" class="empty">这六个月还没有消费记录</div>
               </template>
-            </template><template v-else><Chart :option="lineOption"/><div v-if="!monthly.length&&!trend" class="empty">本月还没有消费记录</div></template></section><section class="card category-card"><div class="card-heading"><h2>钱都花在哪儿</h2><SlidersHorizontal :size="17"/></div><div class="pie-wrap"><Chart :option="pieOption"/><div class="pie-label"><small>支出分布</small><strong>{{groups.length}}<small> 类</small></strong></div></div><div class="category-legend"><div v-for="g in (page==='消费分析' ? groups : groups.slice(0,4))" :key="g.category"><i :style="{background:colors[categories.indexOf(g.category)]}"></i><span>{{g.category}}
+            </template><template v-else>
+              <div v-if="mode === 'live' && !trend" class="empty">{{ loading ? '正在加载趋势…' : '暂时无法加载趋势' }}</div>
+              <template v-else><Chart :option="lineOption"/><div v-if="mode === 'demo' && !monthly.length" class="empty">本月还没有消费记录</div></template>
+            </template></section><section class="card category-card"><div class="card-heading"><h2>钱都花在哪儿</h2><SlidersHorizontal :size="17"/></div><div class="pie-wrap"><Chart :option="pieOption"/><div class="pie-label"><small>支出分布</small><strong>{{groups.length}}<small> 类</small></strong></div></div><div class="category-legend"><div v-for="g in (page==='消费分析' ? groups : groups.slice(0,4))" :key="g.category"><i :style="{background:colors[categories.indexOf(g.category)]}"></i><span>{{g.category}}
               <small v-if="page==='消费分析' && budgetStatus[categoryBudgets[g.category]?.status]"
                 class="budget-tag" :class="categoryBudgets[g.category].status">{{budgetStatus[categoryBudgets[g.category].status]}}</small>
               </span><b>{{money(g.total)}}</b></div></div><p v-if="!groups.length" class="empty">记下第一笔，开始了解自己</p></section></div>
-            <section class="card bills-card"><div class="card-heading"><div><h2>{{page==='账单明细'?'全部账单':'最近账单'}} <span class="count">{{filtered.length}}</span></h2><p>认真记录，生活中的每一个小日常</p></div><button class="secondary" @click="exportCSV"><Download :size="15"/>导出账单</button></div><div class="filters"><label class="search"><Search :size="17"/><input v-model="keyword" placeholder="搜索商户或备注…" aria-label="搜索账单"></label><select v-model="category" aria-label="筛选分类"><option value="">全部分类</option><option v-for="c in categories">{{c}}</option></select><button v-if="keyword||category" class="text-button" @click="keyword='';category=''">清除筛选</button><span class="filter-total">筛选合计 ¥{{money(filtered.reduce((s,b)=>s+Number(b.amount),0))}}</span></div><div class="table-scroll"><table><thead><tr><th>消费项目</th><th>分类</th><th>消费时间</th><th>金额</th><th></th></tr></thead><tbody><tr v-for="bill in (page==='账单明细'?filtered:filtered.slice(0,5))" :key="bill.id"><td><div class="merchant"><span class="category-icon" :style="{background:colors[categories.indexOf(bill.category)]+'22'}">{{icons[categories.indexOf(bill.category)]||'🧾'}}</span><div><b>{{bill.merchant||bill.category}}</b><small>{{bill.note||'日常消费'}}</small></div></div></td><td><span class="tag">{{bill.category}}</span></td><td class="date">{{displayBillTime(bill)}}</td><td class="amount">− ¥{{money(bill.amount)}}</td><td><button class="delete icon" aria-label="删除账单" @click="pendingDelete=bill.id"><Trash2 :size="15"/></button></td></tr></tbody></table><div v-if="loading" class="empty">正在加载账本…</div><div v-else-if="!filtered.length" class="empty"><ReceiptText :size="28"/><p>{{keyword||category?'没有找到匹配账单':'还没有账单，记录今天的第一笔吧。'}}</p><button class="text-button" @click="openManual()">添加一笔消费</button></div></div><button v-if="page!=='账单明细'&&filtered.length>5" class="table-footer" @click="page='账单明细'">查看全部账单 <ChevronRight :size="14"/></button></section>
+            <section class="card bills-card"><div class="card-heading"><div><h2>{{page==='账单明细'?'全部账单':'最近账单'}} <span class="count">共 {{tableTotal ?? '—'}} 笔</span></h2><p>认真记录，生活中的每一个小日常</p></div><button class="secondary" :disabled="exporting || tableLoading || !tableTotal" @click="exportCSV"><Download :size="15"/>{{exporting ? '正在导出…' : '导出账单'}}</button></div><div class="filters"><label class="search"><Search :size="17"/><input v-model="keyword" placeholder="搜索商户或备注…" aria-label="搜索账单"></label><select v-model="category" aria-label="筛选分类"><option value="">全部分类</option><option v-for="c in categories">{{c}}</option></select><button v-if="keyword||category" class="text-button" @click="keyword='';category=''">清除筛选</button><span class="filter-total">筛选合计 ¥{{tableAmount == null ? '—' : money(tableAmount)}}</span></div><div class="table-scroll"><table><thead><tr><th>消费项目</th><th>分类</th><th>消费时间</th><th>金额</th><th></th></tr></thead><tbody><tr v-for="bill in tableLoading ? [] : displayedBills" :key="bill.id"><td><div class="merchant"><span class="category-icon" :style="{background:colors[categories.indexOf(bill.category)]+'22'}">{{icons[categories.indexOf(bill.category)]||'🧾'}}</span><div><b>{{bill.merchant||bill.category}}</b><small>{{bill.note||'日常消费'}}</small></div></div></td><td><span class="tag">{{bill.category}}</span></td><td class="date">{{displayBillTime(bill)}}</td><td class="amount">− ¥{{money(bill.amount)}}</td><td><button class="delete icon" aria-label="删除账单" @click="pendingDelete=bill.id"><Trash2 :size="15"/></button></td></tr></tbody></table><div v-if="loading || tableLoading" class="empty">正在加载账本…</div><div v-else-if="tableError" class="empty" role="alert">{{tableError}} <button class="text-button" type="button" @click="loadTable">重试</button></div><div v-else-if="!displayedBills.length" class="empty"><ReceiptText :size="28"/><p>{{keyword||category?'没有找到匹配账单':'还没有账单，记录今天的第一笔吧。'}}</p><button class="text-button" @click="openManual()">添加一笔消费</button></div></div><div v-if="page === '账单明细' && tableTotal > BILL_PAGE_SIZE" class="bill-pagination" role="navigation" aria-label="账单分页"><button class="secondary" type="button" :disabled="tableLoading || billPage <= 1" @click="turnBillPage(billPage - 1)">上一页</button><span aria-live="polite">第 {{billPage}} / {{lastBillPage}} 页</span><button class="secondary" type="button" :disabled="tableLoading || billPage >= lastBillPage" @click="turnBillPage(billPage + 1)">下一页</button></div><button v-if="page!=='账单明细'&&tableTotal>5" class="table-footer" @click="page='账单明细'">查看全部账单 <ChevronRight :size="14"/></button></section>
           </template>
         </template>
         <footer><span><Leaf :size="14"/> 钱花得明白，生活过得自在。</span><span>小账 POCKET AI · 记录生活的分寸</span></footer>
